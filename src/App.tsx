@@ -268,9 +268,6 @@ export default function App() {
         setCoreInfo(info);
         pushToast(dict.toast.coreStopped, "neutral");
       } else {
-        if (!coreInfo.installed) {
-          pushToast(dict.toast.coreAutoDownloading, "neutral");
-        }
         const [info, report] = await api.startCore();
         setCoreInfo(info);
         setPreflight(report);
@@ -281,7 +278,11 @@ export default function App() {
         }
       }
     } catch (err) {
-      pushToast(String(err), "err");
+      const msg = String(err);
+      pushToast(
+        msg.includes("CORE_NOT_INSTALLED") ? dict.toast.coreMissingAction : msg,
+        "err"
+      );
     } finally {
       setCoreBusy(false);
     }
@@ -365,14 +366,15 @@ export default function App() {
       if (kind === "tcping") {
         await api.runBatchTcping(nodeIds);
       } else {
-        if (!coreInfo.installed) {
-          pushToast(dict.toast.coreAutoDownloading, "neutral");
-        }
         await api.runBatchRealDelay(nodeIds);
       }
       await reloadBootstrap();
     } catch (err) {
-      pushToast(String(err), "err");
+      const msg = String(err);
+      pushToast(
+        msg.includes("CORE_NOT_INSTALLED") ? dict.toast.coreMissingAction : msg,
+        "err"
+      );
     } finally {
       setTestingKind(null);
     }
@@ -445,7 +447,11 @@ export default function App() {
         report.ok ? "ok" : "err"
       );
     } catch (err) {
-      pushToast(String(err), "err");
+      const msg = String(err);
+      pushToast(
+        msg.includes("CORE_NOT_INSTALLED") ? dict.toast.coreMissingAction : msg,
+        "err"
+      );
     }
   };
 
@@ -545,6 +551,7 @@ export default function App() {
               testingKind={testingKind}
               downloadingCore={downloadingCore}
               onDownloadCore={handleDownloadCore}
+              onImportCoreBinary={handleImportCoreBinary}
               onSelectMainNode={(id) => void handleSelectMainNode(id)}
               onDeleteNode={(id) => void handleDeleteNode(id)}
               onRunBatchTest={(k, ids) => void handleRunBatchTest(k, ids)}

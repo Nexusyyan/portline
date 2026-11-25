@@ -5,6 +5,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+pub const PINNED_CORE_VERSION: &str = "v1.14.4";
+pub const PINNED_WIN_AMD64_ZIP_SHA256: &str =
+    "99185d75d314a07dbba4a130c8ad986cbeb629a07927975636b341ca61f991df";
+pub const PINNED_WIN_AMD64_EXE_SHA256: &str =
+    "8f30682ee198855440d2a7fe070d5d3653793b2d01bb8c85eea88f93bbe7c8b9";
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OfficialReleaseInfo {
@@ -160,37 +166,88 @@ impl CoreManager {
         Err(anyhow!("No matching official release asset for {}", needle))
     }
 
-    /// Downloads official sing-box Windows ZIP archive, verifies SHA-256, and extracts `sing-box.exe`.
+    /// Downloads the pinned official sing-box Windows archive via direct GitHub + mirror
+    /// fallbacks with a short connect timeout and strict mandatory SHA-256 verification
+    /// so mirrors can never tamper with a single byte and restricted networks do not hang.
     pub async fn download_official_core(&self, expected_sha256: Option<&str>) -> Result<(String, String)> {
-        let info = self.fetch_latest_official_release().await?;
+        let (tag_name, asset_name, official_url, pinned_zip_sha, pinned_exe_sha) =
+            if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+                let ver_num = PINNED_CORE_VERSION.trim_start_matches('v');
+                let asset = format!("sing-box-{}-windows-amd64.zip", ver_num);
+                let url = format!(
+                    "https://github.com/SagerNet/sing-box/releases/download/{}/{}",
+                    PINNED_CORE_VERSION, asset
+                );
+                (
+                    PINNED_CORE_VERSION.to_string(),
+                    asset,
+                    url,
+                    Some(expected_sha256.unwrap_or(PINNED_WIN_AMD64_ZIP_SHA256)),
+                    Some(PINNED_WIN_AMD64_EXE_SHA256),
+                )
+            } else {
+                let info = self.fetch_latest_official_release().await?;
+                (
+                    info.tag_name,
+                    info.asset_name,
+                    info.download_url,
+                    expected_sha256,
+                    None,
+                )
+            };
+
+        let candidate_urls = vec![
+            official_url.clone(),
+            format!("https://ghfast.top/{}", official_url),
+            format!("https://gh-proxy.com/{}", official_url),
+        ];
+
         let client = reqwest::Client::builder()
             .user_agent("Portline-Desktop/0.1")
-            .timeout(Duration::from_secs(120))
+            .connect_timeout(Duration::from_secs(8))
+            .timeout(Duration::from_secs(45))
             .build()?;
-        let bytes = client
-            .get(&info.download_url)
-            .send()
-            .await?
-            .error_for_status()?
-            .bytes()
-            .await?;
 
-        if let Some(expected) = expected_sha256 {
-            let got = hex::encode(Sha256::digest(&bytes));
-            if !got.eq_ignore_ascii_case(expected.trim()) {
-                return Err(anyhow!(
-                    "Archive SHA-256 mismatch: expected {}, got {}",
-                    expected,
-                    got
-                ));
+        let mut downloaded_bytes: Option<Vec<u8>> = None;
+        let mut last_err = String::new();
+
+        for url in &candidate_urls {
+            match client.get(url).send().await {
+                Ok(resp) if resp.status().is_success() => match resp.bytes().await {
+                    Ok(bytes) => {
+                        if let Some(expected) = pinned_zip_sha {
+                            let got = hex::encode(Sha256::digest(&bytes));
+                            if !got.eq_ignore_ascii_case(expected.trim()) {
+                                last_err = format!(
+                                    "SHA-256 mismatch from {} (expected {}, got {})",
+                                    url, expected, got
+                                );
+                                continue;
+                            }
+                        }
+                        downloaded_bytes = Some(bytes.to_vec());
+                        break;
+                    }
+                    Err(e) => last_err = format!("{}: {}", url, e),
+                },
+                Ok(resp) => last_err = format!("{}: HTTP {}", url, resp.status()),
+                Err(e) => last_err = format!("{}: {}", url, e),
             }
         }
+
+        let bytes = downloaded_bytes.ok_or_else(|| {
+            anyhow!(
+                "Unable to download official sing-box {} from GitHub or mirrors ({}). Use the Portable With-Core bundle or import a local sing-box binary.",
+                tag_name,
+                last_err
+            )
+        })?;
 
         std::fs::create_dir_all(&self.core_dir)?;
         let dest = self.binary_path();
 
-        if info.asset_name.ends_with(".zip") {
-            let reader = std::io::Cursor::new(bytes.as_ref());
+        if asset_name.ends_with(".zip") {
+            let reader = std::io::Cursor::new(bytes.as_slice());
             let mut archive = zip::ZipArchive::new(reader).context("Invalid ZIP archive")?;
             let mut extracted = false;
             for i in 0..archive.len() {
@@ -198,6 +255,16 @@ impl CoreManager {
                 if file.name().ends_with("sing-box.exe") || file.name().ends_with("/sing-box") {
                     let mut buf = Vec::new();
                     file.read_to_end(&mut buf)?;
+                    if let Some(expected_exe) = pinned_exe_sha {
+                        let got_exe = hex::encode(Sha256::digest(&buf));
+                        if !got_exe.eq_ignore_ascii_case(expected_exe) {
+                            return Err(anyhow!(
+                                "Extracted binary SHA-256 mismatch: expected {}, got {}",
+                                expected_exe,
+                                got_exe
+                            ));
+                        }
+                    }
                     let tmp = dest.with_extension("tmp");
                     std::fs::write(&tmp, &buf)?;
                     std::fs::rename(&tmp, &dest)?;
@@ -214,7 +281,7 @@ impl CoreManager {
             ));
         }
 
-        let version = self.detect_version().unwrap_or(info.tag_name);
+        let version = self.detect_version().unwrap_or(tag_name);
         let bin_sha = compute_file_sha256(&dest)?;
         Ok((version, bin_sha))
     }

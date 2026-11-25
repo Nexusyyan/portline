@@ -458,7 +458,7 @@ pub fn compile_preview(state: State<'_, AppState>) -> Result<CompileOutput, Stri
 }
 
 #[tauri::command]
-pub async fn run_preflight_check(
+pub fn run_preflight_check(
     state: State<'_, AppState>,
     simulate_bad: bool,
 ) -> Result<PreflightReport, String> {
@@ -478,7 +478,7 @@ pub async fn run_preflight_check(
                 deprecated_warnings: Vec::new(),
             });
         }
-        None => state.ensure_core_binary().await?,
+        None => return Err("CORE_NOT_INSTALLED".to_string()),
     };
     let report = SingBox114Compiler::preflight_check(&bin, &compiled.config)
         .map_err(|e| e.to_string())?;
@@ -494,8 +494,8 @@ pub async fn run_preflight_check(
 }
 
 #[tauri::command]
-pub async fn start_core(state: State<'_, AppState>) -> Result<(CoreInfo, PreflightReport), String> {
-    let bin = state.ensure_core_binary().await?;
+pub fn start_core(state: State<'_, AppState>) -> Result<(CoreInfo, PreflightReport), String> {
+    let bin = state.require_core_binary()?;
     let compiled = state.compile_current()?;
     let report = {
         let mut sup = state
@@ -578,7 +578,7 @@ pub async fn run_batch_real_delay(
     state: State<'_, AppState>,
     node_ids: Vec<String>,
 ) -> Result<Vec<LatencyResult>, String> {
-    let bin = state.ensure_core_binary().await?;
+    let bin = state.require_core_binary()?;
     let (targets, test_url) = {
         let store = state.store.lock().map_err(|_| "store lock poisoned".to_string())?;
         let settings = store.load_settings().map_err(|e| e.to_string())?;

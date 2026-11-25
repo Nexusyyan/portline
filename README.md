@@ -34,8 +34,8 @@ It combines V2rayN-grade scattered node management efficiency, zero-jargon plain
 
 Pre-built Windows releases are published automatically on [GitHub Releases](https://github.com/Nexusyyan/portline/releases):
 
-- **Portable Bundle (`portline-vX.Y.Z-x86_64-windows-portable.zip`)**: Extract and run; includes `portline.exe`, `portable.json`, `LICENSE`, and documentation. All data stays in `./portline-data/`.
-- **Standalone Executable (`portline-vX.Y.Z-x86_64-windows.exe`)**: Single-file native binary storing data in OS AppData by default.
+- **Portable With-Core Bundle (`portline-vX.Y.Z-x86_64-windows-portable.zip`)**: Extract and connect immediately without needing prior GitHub access; bundles `portline.exe`, official unmodified `core/sing-box.exe` (SHA-256 verified), `portable.json`, `LICENSE`, and `THIRD_PARTY_NOTICES.md`. All data stays in `./portline-data/`.
+- **Standalone Lightweight Executable (`portline-vX.Y.Z-x86_64-windows.exe`)**: Single-file GUI without core bundled; place `sing-box.exe` in `./core/` or import locally inside the app.
 - **Integrity Check**: Verify downloaded files against `SHA256SUMS.txt` attached to every release.
 
 ## Architecture

@@ -141,6 +141,12 @@ jobs:
 
           Copy-Item $builtExe (Join-Path $outDir $standaloneName)
 
+          # Bundle official unmodified sing-box v1.14.4 into core/ inside the portable ZIP
+          # (separate out-of-process executable, SHA-256 verified) so users in restricted networks
+          # can extract and connect immediately without needing a proxy to download the core.
+          pwsh -NoProfile -File 'scripts/fetch-core.ps1' -OutDir (Join-Path $stageDir 'core')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
           Copy-Item $builtExe (Join-Path $stageDir "$bin.exe")
           foreach ($doc in @('LICENSE', 'THIRD_PARTY_NOTICES.md', 'README.md', 'README.zh-CN.md')) {
             if (Test-Path $doc) {
@@ -207,8 +213,8 @@ jobs:
 
           | Package | Description | SHA-256 |
           | --- | --- | --- |
-          | `__PORTABLE_ZIP__` | **Portable bundle** (`__BIN__.exe` + `portable.json` + license/docs). Extract and run; app data stays inside `__DATA_DIR__`. | `__ZIP_SHA256__` |
-          | `__STANDALONE_EXE__` | **Standalone executable**. Run directly (or drop `portable.json` next to it for Portable Mode). | `__EXE_SHA256__` |
+          | `__PORTABLE_ZIP__` | **Portable With-Core bundle** (`__BIN__.exe` + official unmodified `core/sing-box.exe` + `portable.json` + notices). Extract and connect immediately offline without needing GitHub access. | `__ZIP_SHA256__` |
+          | `__STANDALONE_EXE__` | **Standalone lightweight executable** (no core bundled; bring your own `core/sing-box.exe` or import locally). | `__EXE_SHA256__` |
 
           > Built transparently from source via GitHub Actions (`windows-latest`). Verify downloads against `SHA256SUMS.txt`.
           '@

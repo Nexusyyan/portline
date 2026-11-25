@@ -34,8 +34,8 @@
 
 请前往 [GitHub Releases](https://github.com/Nexusyyan/portline/releases) 下载对应版本：
 
-- **便携压缩包（`portline-vX.Y.Z-x86_64-windows-portable.zip`）**：解压即用，内置 `portline.exe`、`portable.json` 与许可文档，所有数据保存在 `./portline-data/`。
-- **独立单文件（`portline-vX.Y.Z-x86_64-windows.exe`）**：双击直接运行，默认将数据存于系统 AppData 目录。
+- **便携完整包（`portline-vX.Y.Z-x86_64-windows-portable.zip`，推荐）**：开箱即用，内置 `portline.exe`、经 SHA-256 校验的官方未修改 `core/sing-box.exe`、`portable.json` 与许可文档；即使处于无法访问 GitHub 的网络环境也能解压直连，所有数据保存在 `./portline-data/`。
+- **独立轻量单文件（`portline-vX.Y.Z-x86_64-windows.exe`）**：仅包含 GUI 本体，可自行在同目录 `core/` 放入 `sing-box.exe` 或在软件内离线导入。
 - **完整性校验**：每个 Release 均附带 `SHA256SUMS.txt` 校验文件。
 
 ## 本地开发与构建

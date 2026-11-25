@@ -140,30 +140,12 @@ impl AppState {
         }
     }
 
-    /// Returns an installed sing-box path if available, or seamlessly downloads and verifies
-    /// the latest official release on first use so users never hit a missing-binary dead end.
-    pub async fn ensure_core_binary(&self) -> Result<std::path::PathBuf, String> {
-        if let Some(existing) = self.core_manager.resolve_binary_path() {
-            return Ok(existing);
-        }
-        self.push_log(
-            "INFO",
-            "core-manager: sing-box not found locally; auto-downloading latest official release...",
-        );
-        let (ver, sha) = self
-            .core_manager
-            .download_official_core(None)
-            .await
-            .map_err(|e| format!("Auto-download sing-box failed: {}", e))?;
-        self.push_log(
-            "INFO",
-            format!(
-                "core-manager: auto-installed {} (sha256: {}...)",
-                ver,
-                &sha[..12.min(sha.len())]
-            ),
-        );
-        Ok(self.core_manager.binary_path())
+    /// Resolves an installed sing-box binary or returns a structured `CORE_NOT_INSTALLED` error
+    /// immediately (never silently hanging on blocked GitHub networks during start or latency test).
+    pub fn require_core_binary(&self) -> Result<std::path::PathBuf, String> {
+        self.core_manager
+            .resolve_binary_path()
+            .ok_or_else(|| "CORE_NOT_INSTALLED".to_string())
     }
 
     pub fn reload_core_if_running(&self) -> Result<Option<PreflightReport>, String> {
