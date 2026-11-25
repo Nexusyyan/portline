@@ -225,6 +225,13 @@ export default function App() {
     try {
       const nextCompiled = await api.setRouteMode(mode);
       setCompiled(nextCompiled);
+      const msg =
+        mode === "direct"
+          ? dict.toast.modeDirect
+          : mode === "global"
+            ? dict.toast.modeGlobal
+            : dict.toast.modeRule;
+      pushToast(msg, "ok");
     } catch (err) {
       pushToast(String(err), "err");
     }

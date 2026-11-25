@@ -517,6 +517,16 @@ async fn test_real_singbox_multiport_hotswitch_and_bad_config_rollback() {
     assert_eq!(client.get_proxy_now("main-exit").await.unwrap(), "n-hy2");
     assert_eq!(supervisor.require_running_pid().unwrap(), initial_pid);
 
+    // 2b. Verify 0ms live route-mode switching (rule -> direct -> global -> rule) via clash_mode!
+    assert_eq!(client.get_mode().await.unwrap(), "rule");
+    client.set_mode("direct").await.expect("set direct mode");
+    assert_eq!(client.get_mode().await.unwrap(), "direct");
+    client.set_mode("global").await.expect("set global mode");
+    assert_eq!(client.get_mode().await.unwrap(), "global");
+    client.set_mode("rule").await.expect("set rule mode");
+    assert_eq!(client.get_mode().await.unwrap(), "rule");
+    assert_eq!(supervisor.require_running_pid().unwrap(), initial_pid);
+
     // 3. Inject an intentionally invalid config override -> preflight MUST reject it and keep initial_pid alive!
     let mut bad_cfg = compiled.config.clone();
     bad_cfg["outbounds"] = serde_json::json!([{ "type": "nonexistent_proto_xyz", "tag": "broken" }]);

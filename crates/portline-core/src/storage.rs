@@ -149,6 +149,25 @@ impl Store {
             for rule in default_simple_rules() {
                 self.upsert_rule(&rule)?;
             }
+        } else if let Ok(existing_rules) = self.list_rules() {
+            // Seamlessly upgrade the unmodified initial 5-domain CN fallback rule
+            // so domestic sites and IP checkers route directly without requiring .srs downloads.
+            let legacy_cn = [
+                "baidu.com".to_string(),
+                "qq.com".to_string(),
+                "bilibili.com".to_string(),
+                "taobao.com".to_string(),
+                "cn".to_string(),
+            ];
+            if let Some(mut cn_rule) = existing_rules.into_iter().find(|r| r.id == "r-cn") {
+                if cn_rule.patterns == legacy_cn {
+                    if let Some(fresh) = default_simple_rules().into_iter().find(|r| r.id == "r-cn") {
+                        cn_rule.patterns = fresh.patterns;
+                        cn_rule.description = fresh.description;
+                        let _ = self.upsert_rule(&cn_rule);
+                    }
+                }
+            }
         }
         if self.get_kv("settings")?.is_none() {
             self.save_settings(&AppSettings::default())?;
@@ -449,12 +468,27 @@ pub fn default_simple_rules() -> Vec<SimpleRoutingRule> {
             id: "r-cn".to_string(),
             title: "China Direct & LAN".to_string(),
             title_en: "China Direct & LAN".to_string(),
-            description: "baidu.com, qq.com, weixin.qq.com, bilibili.com, .cn".to_string(),
+            description: "baidu.com, qq.com, bilibili.com, taobao.com, jd.com, zhihu.com, ipip.net, .cn".to_string(),
             patterns: vec![
                 "baidu.com".to_string(),
                 "qq.com".to_string(),
+                "weixin.qq.com".to_string(),
                 "bilibili.com".to_string(),
                 "taobao.com".to_string(),
+                "tmall.com".to_string(),
+                "jd.com".to_string(),
+                "zhihu.com".to_string(),
+                "weibo.com".to_string(),
+                "douyin.com".to_string(),
+                "163.com".to_string(),
+                "alipay.com".to_string(),
+                "aliyun.com".to_string(),
+                "tencent.com".to_string(),
+                "xiaohongshu.com".to_string(),
+                "csdn.net".to_string(),
+                "ipip.net".to_string(),
+                "ip138.com".to_string(),
+                "cip.cc".to_string(),
                 "cn".to_string(),
             ],
             process_names: Vec::new(),

@@ -165,9 +165,22 @@ impl AppState {
             .supervisor
             .lock()
             .map_err(|_| "supervisor lock poisoned".to_string())?;
-        let report = sup
-            .apply_config(&bin_path, compiled.config)
-            .map_err(|e| e.to_string())?;
+        let report = match sup.apply_config(&bin_path, compiled.config) {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = format!("reload failed: {}", e);
+                drop(sup);
+                self.push_log("ERROR", &msg);
+                return Err(msg);
+            }
+        };
+        if !report.ok {
+            drop(sup);
+            self.push_log(
+                "ERROR",
+                format!("reload blocked by preflight (exit {})", report.exit_code),
+            );
+        }
         Ok(Some(report))
     }
 

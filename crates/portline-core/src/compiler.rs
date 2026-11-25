@@ -1,6 +1,5 @@
 use crate::model::{
-    AppSettings, CompileOutput, InboundPort, NodeIR, PreflightReport, Protocol, RouteMode,
-    SimpleRoutingRule,
+    AppSettings, CompileOutput, InboundPort, NodeIR, PreflightReport, Protocol, SimpleRoutingRule,
 };
 use crate::rule_cache::RuleCache;
 use anyhow::{anyhow, Context, Result};
@@ -45,14 +44,13 @@ impl SingBox114Compiler {
             reachable.insert(main_id.clone());
         }
 
-        // In rule mode, gather targets from enabled rules and enabled extra ports.
+        // Always collect targets from enabled rules and extra ports so 0ms live
+        // `clash_mode` switching between direct / global / rule works without restarting core.
         for port in input.extra_ports.iter().filter(|p| p.enabled) {
             collect_target_reachability(&port.target, &node_map, input.nodes, &mut needed_autos, &mut reachable);
         }
-        if input.settings.route_mode == RouteMode::Rule {
-            for rule in input.rules.iter().filter(|r| r.enabled) {
-                collect_target_reachability(&rule.target, &node_map, input.nodes, &mut needed_autos, &mut reachable);
-            }
+        for rule in input.rules.iter().filter(|r| r.enabled) {
+            collect_target_reachability(&rule.target, &node_map, input.nodes, &mut needed_autos, &mut reachable);
         }
 
         // Expand chained proxy detours transitively so no dangling detour tag is produced.
@@ -172,15 +170,19 @@ impl SingBox114Compiler {
         }
 
         // Build route rules & optional local .srs rule sets (3-tier offline fallback).
+        // `clash_mode` rules sit immediately after sniff / hijack-dns / private LAN bypass so
+        // PATCH /configs {"mode":"direct"|"global"|"rule"} switches live traffic in 0ms.
         let mut route_rules: Vec<Value> = vec![
             json!({ "action": "sniff" }),
             json!({ "protocol": "dns", "action": "hijack-dns" }),
             json!({ "ip_is_private": true, "outbound": "direct" }),
+            json!({ "clash_mode": "direct", "outbound": "direct" }),
+            json!({ "clash_mode": "global", "outbound": "main-exit" }),
         ];
         let mut rule_sets: Vec<Value> = Vec::new();
         let mut added_rule_sets: HashSet<String> = HashSet::new();
 
-        // Dedicated extra port bindings take priority over generic domain rules.
+        // Dedicated extra port bindings take priority over generic domain rules in rule mode.
         for port in input.extra_ports.iter().filter(|p| p.enabled && p.port != input.settings.mixed_port) {
             let resolved = resolve_compiled_outbound(&port.target, &auto_tag_map, &reachable);
             if resolved == "reject" {
@@ -196,70 +198,65 @@ impl SingBox114Compiler {
             }
         }
 
-        if input.settings.route_mode == RouteMode::Rule {
-            let mut sorted_rules: Vec<&SimpleRoutingRule> =
-                input.rules.iter().filter(|r| r.enabled).collect();
-            sorted_rules.sort_by_key(|r| r.priority);
+        let mut sorted_rules: Vec<&SimpleRoutingRule> =
+            input.rules.iter().filter(|r| r.enabled).collect();
+        sorted_rules.sort_by_key(|r| r.priority);
 
-            for rule in sorted_rules {
-                let mut rule_obj = Map::new();
-                let mut has_matcher = false;
+        for rule in sorted_rules {
+            let mut rule_obj = Map::new();
+            let mut has_matcher = false;
 
-                // Use local cached .srs file if available; otherwise fall back safely to domain_suffix
-                // so offline startup never fails waiting on remote rule-sets.
-                if let Some(ref srs_tag) = rule.rule_set {
-                    if let Some(cache) = input.rule_cache {
-                        if let Some(local_path) = cache.local_srs_path(srs_tag) {
-                            if added_rule_sets.insert(srs_tag.clone()) {
-                                rule_sets.push(json!({
-                                    "type": "local",
-                                    "tag": srs_tag,
-                                    "format": "binary",
-                                    "path": local_path.to_string_lossy(),
-                                }));
-                            }
-                            rule_obj.insert("rule_set".to_string(), json!([srs_tag]));
-                            has_matcher = true;
+            // Use local cached .srs file if available; otherwise fall back safely to domain_suffix
+            // so offline startup never fails waiting on remote rule-sets.
+            if let Some(ref srs_tag) = rule.rule_set {
+                if let Some(cache) = input.rule_cache {
+                    if let Some(local_path) = cache.local_srs_path(srs_tag) {
+                        if added_rule_sets.insert(srs_tag.clone()) {
+                            rule_sets.push(json!({
+                                "type": "local",
+                                "tag": srs_tag,
+                                "format": "binary",
+                                "path": local_path.to_string_lossy(),
+                            }));
                         }
-                    }
-                }
-
-                if !has_matcher && !rule.patterns.is_empty() {
-                    let clean_domains: Vec<String> = rule
-                        .patterns
-                        .iter()
-                        .map(|p| p.trim().trim_start_matches('.').to_ascii_lowercase())
-                        .filter(|p| !p.is_empty())
-                        .collect();
-                    if !clean_domains.is_empty() {
-                        rule_obj.insert("domain_suffix".to_string(), json!(clean_domains));
+                        rule_obj.insert("rule_set".to_string(), json!([srs_tag]));
                         has_matcher = true;
                     }
                 }
+            }
 
-                if !rule.process_names.is_empty() {
-                    rule_obj.insert("process_name".to_string(), json!(rule.process_names));
+            if !has_matcher && !rule.patterns.is_empty() {
+                let clean_domains: Vec<String> = rule
+                    .patterns
+                    .iter()
+                    .map(|p| p.trim().trim_start_matches('.').to_ascii_lowercase())
+                    .filter(|p| !p.is_empty())
+                    .collect();
+                if !clean_domains.is_empty() {
+                    rule_obj.insert("domain_suffix".to_string(), json!(clean_domains));
                     has_matcher = true;
                 }
-
-                if !has_matcher {
-                    continue;
-                }
-
-                let resolved = resolve_compiled_outbound(&rule.target, &auto_tag_map, &reachable);
-                if resolved == "reject" {
-                    rule_obj.insert("action".to_string(), json!("reject"));
-                } else {
-                    rule_obj.insert("outbound".to_string(), json!(resolved));
-                }
-                route_rules.push(Value::Object(rule_obj));
             }
+
+            if !rule.process_names.is_empty() {
+                rule_obj.insert("process_name".to_string(), json!(rule.process_names));
+                has_matcher = true;
+            }
+
+            if !has_matcher {
+                continue;
+            }
+
+            let resolved = resolve_compiled_outbound(&rule.target, &auto_tag_map, &reachable);
+            if resolved == "reject" {
+                rule_obj.insert("action".to_string(), json!("reject"));
+            } else {
+                rule_obj.insert("outbound".to_string(), json!(resolved));
+            }
+            route_rules.push(Value::Object(rule_obj));
         }
 
-        let final_outbound = match input.settings.route_mode {
-            RouteMode::Direct => "direct",
-            RouteMode::Rule | RouteMode::Global => "main-exit",
-        };
+        let final_outbound = "main-exit";
 
         // Strict sing-box v1.14+ DNS section honoring user-configured local/remote DNS,
         // strategy, and optional FakeIP mode.
@@ -303,7 +300,7 @@ impl SingBox114Compiler {
         }
 
         let mut dns_rules: Vec<Value> = vec![json!({
-            "domain_suffix": direct_domains,
+            "clash_mode": "direct",
             "server": "dns-local"
         })];
         if input.settings.dns_fake_ip {
@@ -311,16 +308,34 @@ impl SingBox114Compiler {
                 "query_type": ["A", "AAAA"],
                 "server": "dns-fakeip"
             }));
-        } else if added_rule_sets.contains("geoip-cn") {
             dns_rules.push(json!({
-                "action": "evaluate",
+                "clash_mode": "global",
+                "server": "dns-remote"
+            }));
+            dns_rules.push(json!({
+                "domain_suffix": direct_domains,
                 "server": "dns-local"
             }));
+        } else {
             dns_rules.push(json!({
-                "rule_set": ["geoip-cn"],
-                "match_response": true,
-                "action": "respond"
+                "clash_mode": "global",
+                "server": "dns-remote"
             }));
+            dns_rules.push(json!({
+                "domain_suffix": direct_domains,
+                "server": "dns-local"
+            }));
+            if added_rule_sets.contains("geoip-cn") {
+                dns_rules.push(json!({
+                    "action": "evaluate",
+                    "server": "dns-local"
+                }));
+                dns_rules.push(json!({
+                    "rule_set": ["geoip-cn"],
+                    "match_response": true,
+                    "action": "respond"
+                }));
+            }
         }
 
         let dns_strategy = match input.settings.dns_strategy.as_str() {
@@ -361,7 +376,7 @@ impl SingBox114Compiler {
             json!({
                 "servers": dns_servers,
                 "rules": dns_rules,
-                "final": if input.settings.route_mode == RouteMode::Direct { "dns-local" } else { "dns-remote" },
+                "final": "dns-remote",
                 "strategy": dns_strategy
             }),
         );

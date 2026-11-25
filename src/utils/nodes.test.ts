@@ -231,6 +231,8 @@ describe("Portline frontend utilities & i18n parity", () => {
     ];
     const ruleLabels = {
       defaultFallback: "Default Fallback",
+      directMode: "Direct Mode",
+      globalMode: "Global Mode",
       lanDirect: "LAN Direct",
       portRulePrefix: "Port",
       domainRuleFallback: "Domain Rule",
@@ -251,6 +253,14 @@ describe("Portline frontend utilities & i18n parity", () => {
     const finalRule = formatConnectionRule("final", rules, [], ruleLabels, {}, true);
     expect(finalRule.label).toBe("Default Fallback");
     expect(finalRule.kind).toBe("fallback");
+
+    const directModeRule = formatConnectionRule("clash_mode=direct => route(direct)", rules, [], ruleLabels, {}, true);
+    expect(directModeRule.label).toBe("Direct Mode");
+    expect(directModeRule.kind).toBe("mode");
+
+    const globalModeRule = formatConnectionRule("clash_mode=global => route(main-exit)", rules, [], ruleLabels, {}, true);
+    expect(globalModeRule.label).toBe("Global Mode");
+    expect(globalModeRule.kind).toBe("mode");
 
     const lanRule = formatConnectionRule("ip_is_private=true => route(direct)", rules, [], ruleLabels, {}, true);
     expect(lanRule.label).toBe("LAN Direct");

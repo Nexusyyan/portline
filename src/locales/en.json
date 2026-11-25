@@ -267,6 +267,9 @@
     "coreStopped": "Core stopped",
     "coreDownloaded": "Official sing-box binary installed and verified",
     "netguardRestored": "OS proxy snapshot restored cleanly",
-    "invalidPort": "Port must be between 1024 and 65535 and unique"
+    "invalidPort": "Port must be between 1024 and 65535 and unique",
+    "modeRule": "Switched to Smart Rules (active connections refreshed)",
+    "modeGlobal": "Switched to Global Proxy (active connections refreshed)",
+    "modeDirect": "Switched to Direct Mode (active connections refreshed)"
   }
 }

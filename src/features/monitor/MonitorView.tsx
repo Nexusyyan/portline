@@ -80,6 +80,8 @@ export function MonitorView({
   const ruleLabels = useMemo(
     () => ({
       defaultFallback: dict.monitor.ruleFallback,
+      directMode: dict.routing.directMode,
+      globalMode: dict.routing.globalMode,
       lanDirect: dict.monitor.ruleLan,
       portRulePrefix: dict.monitor.rulePortPrefix,
       domainRuleFallback: dict.monitor.ruleDomain,

@@ -267,6 +267,9 @@
     "coreStopped": "内核已停止",
     "coreDownloaded": "官方内核下载并校验完成",
     "netguardRestored": "已通过 NetGuard 还原系统代理设置",
-    "invalidPort": "端口号需在 1024-65535 之间且不能重复"
+    "invalidPort": "端口号需在 1024-65535 之间且不能重复",
+    "modeRule": "已切换为「智能分流」（活跃连接已刷新）",
+    "modeGlobal": "已切换为「全局代理」（活跃连接已刷新）",
+    "modeDirect": "已切换为「直连」模式（活跃连接已刷新）"
   }
 }

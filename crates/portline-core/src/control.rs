@@ -61,6 +61,40 @@ impl ControlClient {
         Ok(val["now"].as_str().unwrap_or_default().to_string())
     }
 
+    /// 0ms live route-mode switch (`rule` | `global` | `direct`) via sing-box Clash API.
+    pub async fn set_mode(&self, mode: &str) -> Result<()> {
+        let url = format!("{}/configs", self.base_url);
+        let resp = self
+            .http
+            .patch(url)
+            .json(&json!({ "mode": mode }))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow!("Control API set_mode failed ({}): {}", status, body));
+        }
+        Ok(())
+    }
+
+    pub async fn get_mode(&self) -> Result<String> {
+        let url = format!("{}/configs", self.base_url);
+        let val: Value = self.http.get(url).send().await?.json().await?;
+        Ok(val["mode"].as_str().unwrap_or("rule").to_string())
+    }
+
+    pub async fn wait_ready(&self, max_wait_ms: u64) -> bool {
+        let steps = (max_wait_ms / 50).max(1);
+        for _ in 0..steps {
+            if self.get_version().await.is_ok() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        false
+    }
+
     pub async fn get_proxy_delay(
         &self,
         proxy_tag: &str,

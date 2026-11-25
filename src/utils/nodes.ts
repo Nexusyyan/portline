@@ -309,6 +309,8 @@ export function formatConnectionExit(
 
 export interface RuleDisplayLabels {
   defaultFallback: string;
+  directMode: string;
+  globalMode: string;
   lanDirect: string;
   portRulePrefix: string;
   domainRuleFallback: string;
@@ -318,7 +320,7 @@ export interface RuleDisplayLabels {
 export interface FormattedRule {
   label: string;
   raw: string;
-  kind: "fallback" | "rule" | "port" | "lan";
+  kind: "fallback" | "rule" | "port" | "lan" | "mode";
 }
 
 function ruleTargetTag(target: string): string {
@@ -361,6 +363,14 @@ export function formatConnectionRule(
 
   if (trimmed.includes("ip_is_private")) {
     return { label: labels.lanDirect, raw: trimmed, kind: "lan" };
+  }
+
+  if (trimmed.includes("clash_mode=direct")) {
+    return { label: labels.directMode, raw: trimmed, kind: "mode" };
+  }
+
+  if (trimmed.includes("clash_mode=global")) {
+    return { label: labels.globalMode, raw: trimmed, kind: "mode" };
   }
 
   const inboundMatch = trimmed.match(/inbound=\[([^\]]+)\]/);

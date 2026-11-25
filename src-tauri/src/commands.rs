@@ -314,18 +314,51 @@ pub async fn select_main_node(
 }
 
 #[tauri::command]
-pub fn set_route_mode(
+pub async fn set_route_mode(
     state: State<'_, AppState>,
     mode: RouteMode,
 ) -> Result<CompileOutput, String> {
-    {
+    let control_port = {
         let store = state.store.lock().map_err(|_| "store lock poisoned".to_string())?;
         let mut settings = store.load_settings().map_err(|e| e.to_string())?;
         settings.route_mode = mode;
         store.save_settings(&settings).map_err(|e| e.to_string())?;
+        settings.control_port
+    };
+
+    let running = state
+        .supervisor
+        .lock()
+        .map(|mut s| s.is_running())
+        .unwrap_or(false);
+
+    if running {
+        let mut live_switched = false;
+        if let Ok(client) = ControlClient::new(control_port, &state.control_secret) {
+            if client.set_mode(mode.as_str()).await.is_ok() {
+                live_switched = true;
+                // Close stale keep-alive connections so browsers immediately route via the new mode.
+                let _ = client.close_all_connections().await;
+                state.push_log(
+                    "INFO",
+                    format!(
+                        "route mode switched -> {} (0ms live via clash_mode, active connections reset)",
+                        mode.as_str()
+                    ),
+                );
+            }
+        }
+        if !live_switched {
+            state.reload_core_if_running()?;
+            state.push_log(
+                "INFO",
+                format!("route mode switched -> {} (via core reload)", mode.as_str()),
+            );
+        }
+    } else {
+        state.push_log("INFO", format!("route mode changed -> {}", mode.as_str()));
     }
-    state.push_log("INFO", format!("route mode changed -> {}", mode.as_str()));
-    let _ = state.reload_core_if_running();
+
     state.compile_current()
 }
 
@@ -444,9 +477,18 @@ pub fn update_settings(
     state: State<'_, AppState>,
     settings: AppSettings,
 ) -> Result<CompileOutput, String> {
-    {
+    let prev_port = {
         let store = state.store.lock().map_err(|_| "store lock poisoned".to_string())?;
+        let old = store.load_settings().ok().map(|s| s.mixed_port);
         store.save_settings(&settings).map_err(|e| e.to_string())?;
+        old
+    };
+    if prev_port != Some(settings.mixed_port) {
+        if let Ok(guard) = state.netguard.lock() {
+            if guard.is_armed() {
+                let _ = guard.enable_system_proxy("127.0.0.1", settings.mixed_port);
+            }
+        }
     }
     let _ = state.reload_core_if_running();
     state.compile_current()
@@ -494,8 +536,13 @@ pub fn run_preflight_check(
 }
 
 #[tauri::command]
-pub fn start_core(state: State<'_, AppState>) -> Result<(CoreInfo, PreflightReport), String> {
+pub async fn start_core(state: State<'_, AppState>) -> Result<(CoreInfo, PreflightReport), String> {
     let bin = state.require_core_binary()?;
+    let (control_port, route_mode, main_node_id) = {
+        let store = state.store.lock().map_err(|_| "store lock poisoned".to_string())?;
+        let s = store.load_settings().map_err(|e| e.to_string())?;
+        (s.control_port, s.route_mode, s.main_node_id)
+    };
     let compiled = state.compile_current()?;
     let report = {
         let mut sup = state
@@ -505,6 +552,20 @@ pub fn start_core(state: State<'_, AppState>) -> Result<(CoreInfo, PreflightRepo
         sup.apply_config(&bin, compiled.config)
             .map_err(|e| e.to_string())?
     };
+
+    // Sync active clash_mode and main-exit selection immediately once Clash API comes online
+    // so stale state persisted in cache.db never overrides the user's current settings.
+    if report.ok {
+        if let Ok(client) = ControlClient::new(control_port, &state.control_secret) {
+            if client.wait_ready(1500).await {
+                let _ = client.set_mode(route_mode.as_str()).await;
+                if let Some(ref main_id) = main_node_id {
+                    let _ = client.select_proxy("main-exit", main_id).await;
+                }
+            }
+        }
+    }
+
     Ok((state.build_core_info(), report))
 }
 
