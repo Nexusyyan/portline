@@ -1,0 +1,30 @@
+# Rust / Cargo
+/target/
+**/target/
+
+# Node / Frontend
+node_modules/
+dist/
+dist-release/
+release-artifacts/
+release-stage/
+.vite/
+
+# Tauri generated schemas
+src-tauri/gen/schemas/
+
+# Runtime binaries and user data (never commit sing-box binaries or portable data)
+core/
+runtime/
+portline-data/
+*.db
+*.db-shm
+*.db-wal
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+.tmp/

@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify-windows:
+    name: Full Verify (Windows x64)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify pure 7-bit ASCII source files
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $nonAscii = @()
+          Get-ChildItem -Recurse -File -Include *.rs,*.ts,*.tsx,*.js,*.jsx,*.py,*.ps1,*.yml,*.yaml | Where-Object {
+            $_.FullName -notmatch '\\(target|node_modules|dist|\.git)\\'
+          } | ForEach-Object {
+            $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
+            if ($bytes | Where-Object { $_ -gt 127 }) {
+              $nonAscii += $_.FullName
+            }
+          }
+          if ($nonAscii.Count -gt 0) {
+            Write-Error ("Non-ASCII characters found in: " + ($nonAscii -join ", "))
+            exit 1
+          }
+          Write-Host "OK: all source files are pure 7-bit ASCII"
+
+      - name: TypeScript typecheck
+        run: pnpm typecheck
+
+      - name: Frontend unit tests
+        run: pnpm test
+
+      - name: Build frontend bundle
+        run: pnpm build
+
+      - name: Rust Clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Rust workspace tests
+        run: cargo test --workspace
+
+  verify-unix-core:
+    name: Core & Service Verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Clippy core, ipc, and service crates
+        run: cargo clippy -p portline-core -p portline-ipc -p portline-service --all-targets -- -D warnings
+
+      - name: Test core and ipc crates
+        run: cargo test -p portline-core -p portline-ipc

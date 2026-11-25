@@ -1,0 +1,160 @@
+import { describe, expect, it } from "vitest";
+import en from "../locales/en.json";
+import zhCN from "../locales/zh-CN.json";
+import type { NodeIR, SimpleRoutingRule } from "../types";
+import {
+  evaluateRouteSimulation,
+  filterAndSortNodes,
+  formatBytes,
+  pushRingBuffer,
+} from "./nodes";
+
+function collectLeafKeys(obj: Record<string, unknown>, prefix = ""): string[] {
+  const keys: string[] = [];
+  for (const [k, v] of Object.entries(obj)) {
+    const path = prefix ? `${prefix}.${k}` : k;
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      keys.push(...collectLeafKeys(v as Record<string, unknown>, path));
+    } else {
+      keys.push(path);
+    }
+  }
+  return keys.sort();
+}
+
+const SAMPLE_NODES: NodeIR[] = [
+  {
+    id: "n-jp-1",
+    protocol: "vless",
+    remark: "JP-Tokyo-01",
+    server: "jp1.example.com",
+    port: 443,
+    group: "VPS",
+    region: "JP",
+    wgLocalAddress: [],
+    tcpingMs: 40,
+    realDelayMs: 52,
+    createdAt: "2026-11-25T00:00:00Z",
+  },
+  {
+    id: "n-us-1",
+    protocol: "hysteria2",
+    remark: "US-LA-Residential",
+    server: "us1.example.com",
+    port: 8443,
+    group: "Sub",
+    region: "US",
+    wgLocalAddress: [],
+    tcpingMs: 120,
+    realDelayMs: 145,
+    createdAt: "2026-11-25T00:00:00Z",
+  },
+  {
+    id: "n-hk-1",
+    protocol: "shadowsocks",
+    remark: "HK-IPLC-01",
+    server: "hk1.example.com",
+    port: 10443,
+    group: "Sub",
+    region: "HK",
+    wgLocalAddress: [],
+    tcpingMs: 22,
+    realDelayMs: 31,
+    createdAt: "2026-11-25T00:00:00Z",
+  },
+];
+
+describe("Portline frontend utilities & i18n parity", () => {
+  it("keeps en.json and zh-CN.json key sets strictly identical", () => {
+    const enKeys = collectLeafKeys(en as Record<string, unknown>);
+    const zhKeys = collectLeafKeys(zhCN as Record<string, unknown>);
+    expect(zhKeys).toEqual(enKeys);
+  });
+
+  it("filters and sorts nodes by group, query, delay, and name", () => {
+    const byDelay = filterAndSortNodes(SAMPLE_NODES, "ALL", "", "delay");
+    expect(byDelay.map((n) => n.id)).toEqual(["n-hk-1", "n-jp-1", "n-us-1"]);
+
+    const byGroup = filterAndSortNodes(SAMPLE_NODES, "Sub", "hy2", "default");
+    expect(byGroup.map((n) => n.id)).toEqual(["n-us-1"]);
+
+    const byName = filterAndSortNodes(SAMPLE_NODES, "ALL", "", "name");
+    expect(byName.map((n) => n.id)).toEqual(["n-hk-1", "n-jp-1", "n-us-1"]);
+  });
+
+  it("caps log ring buffer strictly at configured maximum", () => {
+    let buf: number[] = [];
+    for (let i = 0; i < 650; i++) {
+      buf = pushRingBuffer(buf, i, 500);
+    }
+    expect(buf.length).toBe(500);
+    expect(buf[0]).toBe(649);
+    expect(buf[499]).toBe(150);
+  });
+
+  it("evaluates plain-language route simulator accurately across modes", () => {
+    const rules: SimpleRoutingRule[] = [
+      {
+        id: "r-ai",
+        title: "AI Platforms",
+        titleEn: "AI Platforms",
+        description: "chatgpt.com",
+        patterns: ["chatgpt.com", "openai.com"],
+        processNames: [],
+        target: "auto:US",
+        enabled: true,
+        priority: 1,
+      },
+    ];
+    const labels = {
+      direct: "Direct",
+      reject: "Block",
+      noNode: "None",
+      defaultFallback: "Fallback",
+      directMode: "Direct Mode",
+      globalMode: "Global Mode",
+      matchedPrefix: "Matched:",
+    };
+
+    const hit = evaluateRouteSimulation(
+      "chatgpt.com",
+      "rule",
+      rules,
+      SAMPLE_NODES,
+      "n-jp-1",
+      labels,
+      true
+    );
+    expect(hit.matchedRuleId).toBe("r-ai");
+    expect(hit.exit.node?.id).toBe("n-us-1");
+
+    const fallback = evaluateRouteSimulation(
+      "youtube.com",
+      "rule",
+      rules,
+      SAMPLE_NODES,
+      "n-jp-1",
+      labels,
+      true
+    );
+    expect(fallback.matchedRuleId).toBeNull();
+    expect(fallback.exit.node?.id).toBe("n-jp-1");
+
+    const direct = evaluateRouteSimulation(
+      "chatgpt.com",
+      "direct",
+      rules,
+      SAMPLE_NODES,
+      "n-jp-1",
+      labels,
+      true
+    );
+    expect(direct.exit.kind).toBe("direct");
+  });
+
+  it("formats byte sizes cleanly", () => {
+    expect(formatBytes(0)).toBe("0 B");
+    expect(formatBytes(1536)).toBe("1.5 KB");
+    expect(formatBytes(10 * 1024 * 1024)).toBe("10.0 MB");
+  });
+});

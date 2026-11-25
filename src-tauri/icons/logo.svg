@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <linearGradient id="tileBg" x1="128" y1="64" x2="896" y2="960" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#F5F5F7"/>
+    </linearGradient>
+  </defs>
+  <!-- Ceramic-White Luminous Squircle Tile (89% optical fill) -->
+  <rect x="56" y="56" width="912" height="912" rx="224" fill="url(#tileBg)" stroke="#18181B" stroke-opacity="0.12" stroke-width="14"/>
+  <!-- Switchboard Fork Emblem scaled cleanly inside tile -->
+  <g transform="translate(176, 176) scale(21)" stroke="#18181B" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <circle cx="8" cy="10" r="2.6"/>
+    <circle cx="8" cy="22" r="2.6"/>
+    <circle cx="24" cy="16" r="2.6"/>
+    <path d="M10.6 10H15C17.8 10 18.2 16 21.4 16"/>
+    <path d="M10.6 22H15C17.8 22 18.2 16 21.4 16"/>
+  </g>
+</svg>
