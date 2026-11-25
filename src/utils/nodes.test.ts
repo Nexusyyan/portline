@@ -7,6 +7,9 @@ import {
   evaluateRouteSimulation,
   filterAndSortNodes,
   formatBytes,
+  formatConnectionExit,
+  formatConnectionRule,
+  humanizeLogMessage,
   PROTO_BADGES,
   pushRingBuffer,
 } from "./nodes";
@@ -170,5 +173,95 @@ describe("Portline frontend utilities & i18n parity", () => {
     expect(buckets).toEqual([{ code: "AU", count: 2 }]);
     expect(PROTO_BADGES.http).toBe("HTTP");
     expect(PROTO_BADGES.socks).toBe("SOCKS");
+  });
+
+  it("formats connection exits, rules, and log messages into human-readable labels", () => {
+    const liveNodes: NodeIR[] = [
+      {
+        ...SAMPLE_NODES[0],
+        id: "n-vless-c36e1afb",
+        protocol: "vless",
+        remark: "vmiss REALITY (cfedge)",
+        region: "US",
+      },
+      {
+        ...SAMPLE_NODES[0],
+        id: "n-tuic-bf855003",
+        protocol: "tuic",
+        remark: "AU oracle-arm TUIC-22372",
+        region: "AU",
+      },
+    ];
+    const nodeById = new Map(liveNodes.map((n) => [n.id, n]));
+    const exitLabels = {
+      direct: "Direct",
+      reject: "Blocked",
+      mainExit: "Main Exit",
+      autoAll: "Auto All",
+      autoRegionPrefix: "Auto",
+      regions: { AU: "Australia", US: "United States" },
+    };
+
+    const mainConn = formatConnectionExit(["n-vless-c36e1afb", "main-exit"], nodeById, exitLabels);
+    expect(mainConn.label).toBe("vmiss REALITY (cfedge)");
+    expect(mainConn.protocol).toBe("VLESS");
+    expect(mainConn.groupHint).toBe("Main Exit");
+
+    const autoConn = formatConnectionExit(["n-tuic-bf855003", "auto-au"], nodeById, exitLabels);
+    expect(autoConn.label).toBe("AU oracle-arm TUIC-22372");
+    expect(autoConn.protocol).toBe("TUIC");
+    expect(autoConn.groupHint).toBe("Auto Australia");
+
+    const directConn = formatConnectionExit(["direct"], nodeById, exitLabels);
+    expect(directConn.kind).toBe("direct");
+    expect(directConn.label).toBe("Direct");
+
+    const rules: SimpleRoutingRule[] = [
+      {
+        id: "r-ai",
+        title: "AI",
+        titleEn: "AI Platforms",
+        description: "OpenAI",
+        patterns: ["openai.com", "chatgpt.com", "claude.ai"],
+        processNames: [],
+        target: "auto:AU",
+        enabled: true,
+        priority: 1,
+      },
+    ];
+    const ruleLabels = {
+      defaultFallback: "Default Fallback",
+      lanDirect: "LAN Direct",
+      portRulePrefix: "Port",
+      domainRuleFallback: "Domain Rule",
+      processRuleFallback: "Process Rule",
+    };
+
+    const aiRule = formatConnectionRule(
+      "domain_suffix=[openai.com chatgpt.com claude.ai...] => route(auto-au)",
+      rules,
+      [],
+      ruleLabels,
+      { "r-ai": "AI Platforms" },
+      true
+    );
+    expect(aiRule.label).toBe("AI Platforms");
+    expect(aiRule.kind).toBe("rule");
+
+    const finalRule = formatConnectionRule("final", rules, [], ruleLabels, {}, true);
+    expect(finalRule.label).toBe("Default Fallback");
+    expect(finalRule.kind).toBe("fallback");
+
+    const lanRule = formatConnectionRule("ip_is_private=true => route(direct)", rules, [], ruleLabels, {}, true);
+    expect(lanRule.label).toBe("LAN Direct");
+
+    const humanized = humanizeLogMessage(
+      "outbound/vless[n-vless-c36e1afb]: outbound connection via [auto-au]",
+      nodeById,
+      exitLabels
+    );
+    expect(humanized).toBe(
+      "outbound/vless[vmiss REALITY (cfedge)]: outbound connection via [Auto Australia]"
+    );
   });
 });

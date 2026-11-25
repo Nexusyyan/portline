@@ -1,4 +1,4 @@
-import type { NodeIR, Protocol, RouteMode, SimpleRoutingRule } from "../types";
+import type { InboundPort, NodeIR, Protocol, RouteMode, SimpleRoutingRule } from "../types";
 
 export type NodeSortMode = "default" | "delay" | "name";
 
@@ -224,6 +224,262 @@ export function delayColorVar(ms?: number | null): string {
   if (ms <= 95) return "var(--success-text)";
   if (ms <= 190) return "var(--warning-text)";
   return "var(--danger-text)";
+}
+
+export interface ExitDisplayLabels {
+  direct: string;
+  reject: string;
+  mainExit: string;
+  autoAll: string;
+  autoRegionPrefix: string;
+  regions: Record<string, string>;
+}
+
+export interface ResolvedExit {
+  label: string;
+  protocol?: string;
+  groupHint?: string;
+  kind: "node" | "direct" | "reject" | "unknown";
+  rawTag: string;
+}
+
+function formatGroupTag(tag: string, labels: ExitDisplayLabels): string | undefined {
+  if (tag === "main-exit") return labels.mainExit;
+  if (tag === "auto-all") return labels.autoAll;
+  if (tag.startsWith("auto-")) {
+    const code = tag.slice("auto-".length).toUpperCase();
+    const regionName = labels.regions[code] ?? code;
+    return `${labels.autoRegionPrefix} ${regionName}`;
+  }
+  return undefined;
+}
+
+export function formatConnectionExit(
+  chain: string[],
+  nodeById: Map<string, NodeIR>,
+  labels: ExitDisplayLabels
+): ResolvedExit {
+  if (!chain || chain.length === 0) {
+    return { label: labels.direct, kind: "direct", rawTag: "direct" };
+  }
+
+  let matchedNode: NodeIR | undefined;
+  for (const tag of chain) {
+    const found = nodeById.get(tag);
+    if (found) {
+      matchedNode = found;
+      break;
+    }
+  }
+
+  let groupHint: string | undefined;
+  for (const tag of chain) {
+    if (matchedNode && tag === matchedNode.id) continue;
+    const hint = formatGroupTag(tag, labels);
+    if (hint) {
+      groupHint = hint;
+      break;
+    }
+  }
+
+  if (matchedNode) {
+    return {
+      label: matchedNode.remark,
+      protocol: PROTO_BADGES[matchedNode.protocol],
+      groupHint,
+      kind: "node",
+      rawTag: matchedNode.id,
+    };
+  }
+
+  const primary = chain[0];
+  if (primary === "direct") {
+    return { label: labels.direct, groupHint, kind: "direct", rawTag: "direct" };
+  }
+  if (primary === "reject" || primary === "block") {
+    return { label: labels.reject, groupHint, kind: "reject", rawTag: primary };
+  }
+
+  const groupLabel = formatGroupTag(primary, labels);
+  if (groupLabel) {
+    return { label: groupLabel, kind: "unknown", rawTag: primary };
+  }
+  return { label: primary, groupHint, kind: "unknown", rawTag: primary };
+}
+
+export interface RuleDisplayLabels {
+  defaultFallback: string;
+  lanDirect: string;
+  portRulePrefix: string;
+  domainRuleFallback: string;
+  processRuleFallback: string;
+}
+
+export interface FormattedRule {
+  label: string;
+  raw: string;
+  kind: "fallback" | "rule" | "port" | "lan";
+}
+
+function ruleTargetTag(target: string): string {
+  if (target === "main") return "main-exit";
+  if (target.startsWith("auto:")) {
+    const suffix = target
+      .slice("auto:".length)
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "-")
+      .replace(/^-+|-+$/g, "");
+    return `auto-${suffix}`;
+  }
+  return target;
+}
+
+function localizedRuleTitle(
+  rule: SimpleRoutingRule,
+  presetTitles: Record<string, string>,
+  useEnglish: boolean
+): string {
+  return presetTitles[rule.id] ?? (useEnglish ? rule.titleEn : rule.title);
+}
+
+export function formatConnectionRule(
+  rawRule: string,
+  rules: SimpleRoutingRule[],
+  extraPorts: InboundPort[],
+  labels: RuleDisplayLabels,
+  presetTitles: Record<string, string>,
+  useEnglish: boolean
+): FormattedRule {
+  const trimmed = (rawRule || "").trim();
+  if (!trimmed || trimmed.toLowerCase() === "final") {
+    return {
+      label: labels.defaultFallback,
+      raw: trimmed || "final",
+      kind: "fallback",
+    };
+  }
+
+  if (trimmed.includes("ip_is_private")) {
+    return { label: labels.lanDirect, raw: trimmed, kind: "lan" };
+  }
+
+  const inboundMatch = trimmed.match(/inbound=\[([^\]]+)\]/);
+  if (inboundMatch) {
+    const tag = inboundMatch[1].trim().split(/\s+/)[0] ?? "";
+    const port = extraPorts.find((p) => p.id === tag);
+    if (port) {
+      const note = (useEnglish ? port.noteEn : port.note).trim();
+      return {
+        label: note ? `:${port.port} (${note})` : `${labels.portRulePrefix} :${port.port}`,
+        raw: trimmed,
+        kind: "port",
+      };
+    }
+    const cleanPort = tag.startsWith("in-") ? `:${tag.slice(3)}` : tag;
+    return {
+      label: `${labels.portRulePrefix} ${cleanPort}`,
+      raw: trimmed,
+      kind: "port",
+    };
+  }
+
+  const routeTargetMatch = trimmed.match(/route\(([^)]+)\)/);
+  const routeTarget = routeTargetMatch ? routeTargetMatch[1].trim() : null;
+
+  const ruleSetMatch = trimmed.match(/rule_set=\[([^\]]+)\]/);
+  if (ruleSetMatch) {
+    const tag = ruleSetMatch[1].trim().split(/\s+/)[0] ?? "";
+    const found = rules.find((r) => r.ruleSet === tag);
+    if (found) {
+      return {
+        label: localizedRuleTitle(found, presetTitles, useEnglish),
+        raw: trimmed,
+        kind: "rule",
+      };
+    }
+  }
+
+  const domainMatch = trimmed.match(/domain_suffix=\[([^\]]+)\]/);
+  if (domainMatch) {
+    const tokens = domainMatch[1]
+      .replace(/\.\.\./g, "")
+      .trim()
+      .split(/\s+/)
+      .map((s) => s.toLowerCase().replace(/^\./, ""))
+      .filter(Boolean);
+
+    let bestRule: SimpleRoutingRule | null = null;
+    let bestScore = 0;
+    for (const rule of rules) {
+      const patterns = new Set(
+        rule.patterns.map((p) => p.trim().toLowerCase().replace(/^\./, ""))
+      );
+      let hits = 0;
+      for (const tok of tokens) {
+        if (patterns.has(tok)) hits += 1;
+      }
+      if (hits > 0) {
+        const targetBonus =
+          routeTarget && ruleTargetTag(rule.target) === routeTarget ? 10 : 0;
+        const score = hits * 2 + targetBonus;
+        if (score > bestScore) {
+          bestScore = score;
+          bestRule = rule;
+        }
+      }
+    }
+    if (bestRule) {
+      return {
+        label: localizedRuleTitle(bestRule, presetTitles, useEnglish),
+        raw: trimmed,
+        kind: "rule",
+      };
+    }
+    return {
+      label: tokens[0] ? `${labels.domainRuleFallback} (${tokens[0]})` : labels.domainRuleFallback,
+      raw: trimmed,
+      kind: "rule",
+    };
+  }
+
+  if (trimmed.includes("process_name=")) {
+    const procMatch = trimmed.match(/process_name=\[([^\]]+)\]/);
+    const procTokens = procMatch
+      ? procMatch[1].trim().split(/\s+/).map((s) => s.toLowerCase())
+      : [];
+    const found = rules.find((r) =>
+      r.processNames.some((p) => procTokens.includes(p.toLowerCase()))
+    );
+    if (found) {
+      return {
+        label: localizedRuleTitle(found, presetTitles, useEnglish),
+        raw: trimmed,
+        kind: "rule",
+      };
+    }
+    return { label: labels.processRuleFallback, raw: trimmed, kind: "rule" };
+  }
+
+  const compact = trimmed.replace(/\s*=>\s*route\([^)]+\)/g, "").trim();
+  return { label: compact || trimmed, raw: trimmed, kind: "rule" };
+}
+
+export function humanizeLogMessage(
+  message: string,
+  nodeById: Map<string, NodeIR>,
+  labels: ExitDisplayLabels
+): string {
+  let out = message.replace(/\bn-[a-z0-9]+-[a-f0-9]{6,12}\b/g, (id) => {
+    const node = nodeById.get(id);
+    return node ? node.remark : id;
+  });
+  out = out.replace(/\[main-exit\]/g, `[${labels.mainExit}]`);
+  out = out.replace(/\[auto-([a-z0-9-]+)\]/g, (full, suffix: string) => {
+    const tag = `auto-${suffix}`;
+    const label = formatGroupTag(tag, labels);
+    return label ? `[${label}]` : full;
+  });
+  return out;
 }
 
 export const SAMPLE_SHARE_URIS = [

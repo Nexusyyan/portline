@@ -229,8 +229,9 @@ impl CoreSupervisor {
         let mut proc = spawn_managed_process(sing_box_path, &cfg_path)?;
         let stdout = proc.child.stdout.take();
         let stderr = proc.child.stderr.take();
-        spawn_log_reader(stdout, Arc::clone(&self.logs), "INFO");
-        spawn_log_reader(stderr, Arc::clone(&self.logs), "WARN");
+        // sing-box writes all normal INFO logs to stderr by default; never classify stderr as WARN.
+        spawn_log_reader(stdout, Arc::clone(&self.logs));
+        spawn_log_reader(stderr, Arc::clone(&self.logs));
 
         self.push_log(
             "INFO",
@@ -265,10 +266,83 @@ impl CoreSupervisor {
     }
 }
 
+pub fn parse_singbox_log_line(raw: &str) -> (&'static str, String) {
+    let clean = strip_ansi_codes(raw);
+    let trimmed = clean.trim();
+
+    // Format 1: "+0800 2026-11-26 00:46:45 INFO inbound/mixed[in-10808]: ..."
+    let tokens: Vec<&str> = trimmed.splitn(5, ' ').collect();
+    if tokens.len() == 5
+        && (tokens[0].starts_with('+') || tokens[0].starts_with('-') || tokens[0] == "UTC")
+        && tokens[1].contains('-')
+        && tokens[2].contains(':')
+    {
+        if let Some(level) = normalize_log_level(tokens[3]) {
+            return (level, tokens[4].trim().to_string());
+        }
+    }
+
+    // Format 2: "INFO[0000] ..." or "ERROR[0012] ..."
+    for (prefix, level) in [
+        ("FATAL[", "ERROR"),
+        ("ERROR[", "ERROR"),
+        ("WARN[", "WARN"),
+        ("INFO[", "INFO"),
+        ("DEBUG[", "DEBUG"),
+        ("TRACE[", "DEBUG"),
+    ] {
+        if let Some(rest) = trimmed.strip_prefix(prefix) {
+            if let Some((_, msg)) = rest.split_once(']') {
+                return (level, msg.trim().to_string());
+            }
+        }
+    }
+
+    // Fallback level detection by standalone token.
+    let upper = trimmed.to_ascii_uppercase();
+    let level = if upper.contains(" FATAL ") || upper.contains(" ERROR ") || upper.starts_with("FATAL") || upper.starts_with("ERROR") {
+        "ERROR"
+    } else if upper.contains(" WARN ") || upper.starts_with("WARN") {
+        "WARN"
+    } else if upper.contains(" DEBUG ") || upper.starts_with("DEBUG") {
+        "DEBUG"
+    } else {
+        "INFO"
+    };
+    (level, trimmed.to_string())
+}
+
+fn normalize_log_level(tok: &str) -> Option<&'static str> {
+    match tok.to_ascii_uppercase().as_str() {
+        "FATAL" | "PANIC" | "ERROR" => Some("ERROR"),
+        "WARN" | "WARNING" => Some("WARN"),
+        "INFO" => Some("INFO"),
+        "DEBUG" | "TRACE" => Some("DEBUG"),
+        _ => None,
+    }
+}
+
+fn strip_ansi_codes(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' && chars.peek() == Some(&'[') {
+            chars.next();
+            for next in chars.by_ref() {
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn spawn_log_reader<R: std::io::Read + Send + 'static>(
     stream: Option<R>,
     logs: Arc<Mutex<LogRing>>,
-    default_level: &'static str,
 ) {
     let Some(reader) = stream else {
         return;
@@ -276,19 +350,15 @@ fn spawn_log_reader<R: std::io::Read + Send + 'static>(
     std::thread::spawn(move || {
         let buf = BufReader::new(reader);
         for line in buf.lines().map_while(Result::ok) {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
+            if line.trim().is_empty() {
                 continue;
             }
-            let level = if trimmed.contains("ERROR") || trimmed.contains("FATAL") {
-                "ERROR"
-            } else if trimmed.contains("WARN") {
-                "WARN"
-            } else {
-                default_level
-            };
+            let (level, message) = parse_singbox_log_line(&line);
+            if message.is_empty() {
+                continue;
+            }
             if let Ok(mut guard) = logs.lock() {
-                guard.push(level, trimmed.to_string());
+                guard.push(level, message);
             }
         }
     });

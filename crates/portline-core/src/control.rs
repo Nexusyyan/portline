@@ -87,7 +87,7 @@ impl ControlClient {
             .ok_or_else(|| anyhow!("Missing delay field in response"))
     }
 
-    pub async fn get_connections(&self) -> Result<(Vec<ConnectionItem>, u64, u64)> {
+    pub async fn get_connections(&self) -> Result<(Vec<ConnectionItem>, u64, u64, u64)> {
         let resp = self
             .http
             .get(format!("{}/connections", self.base_url))
@@ -99,6 +99,7 @@ impl ControlClient {
         let val: Value = resp.json().await?;
         let upload_total = val["uploadTotal"].as_u64().unwrap_or(0);
         let download_total = val["downloadTotal"].as_u64().unwrap_or(0);
+        let memory_bytes = val["memory"].as_u64().unwrap_or(0);
         let mut items = Vec::new();
         if let Some(arr) = val["connections"].as_array() {
             for c in arr {
@@ -118,14 +119,22 @@ impl ControlClient {
                     .as_str()
                     .and_then(|p| p.rsplit(['\\', '/']).next())
                     .filter(|s| !s.is_empty())
-                    .or_else(|| meta["type"].as_str())
-                    .unwrap_or("system")
-                    .to_string();
-                let inbound = meta["inboundName"]
+                    .or_else(|| meta["process"].as_str().filter(|s| !s.is_empty()))
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        let src_ip = meta["sourceIP"].as_str().unwrap_or("");
+                        if src_ip.is_empty() || src_ip == "127.0.0.1" || src_ip == "::1" {
+                            "Local App".to_string()
+                        } else {
+                            src_ip.to_string()
+                        }
+                    });
+                let raw_inbound = meta["inboundName"]
                     .as_str()
+                    .filter(|s| !s.is_empty())
                     .or_else(|| meta["type"].as_str())
-                    .unwrap_or(":10808")
-                    .to_string();
+                    .unwrap_or("mixed");
+                let inbound = normalize_inbound_label(raw_inbound);
                 let chains = c["chains"]
                     .as_array()
                     .map(|arr| {
@@ -147,7 +156,7 @@ impl ControlClient {
                 });
             }
         }
-        Ok((items, upload_total, download_total))
+        Ok((items, upload_total, download_total, memory_bytes))
     }
 
     pub async fn close_connection(&self, id: &str) -> Result<()> {
@@ -173,4 +182,19 @@ impl ControlClient {
         }
         Ok(())
     }
+}
+
+pub fn normalize_inbound_label(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.contains("tun") {
+        return "TUN".to_string();
+    }
+    let tail = trimmed.rsplit('/').next().unwrap_or(trimmed);
+    if let Some(port) = tail.strip_prefix("in-") {
+        if port.chars().all(|c| c.is_ascii_digit()) && !port.is_empty() {
+            return format!(":{}", port);
+        }
+    }
+    tail.to_string()
 }

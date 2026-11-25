@@ -585,7 +585,11 @@ export default function App() {
           {activeTab === "monitor" && (
             <MonitorView
               dict={dict}
+              locale={locale}
               coreRunning={coreInfo.running}
+              nodes={nodes}
+              rules={rules}
+              extraPorts={extraPorts}
               connections={connections}
               logs={logs}
               traffic={traffic}

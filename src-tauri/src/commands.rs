@@ -628,11 +628,13 @@ pub async fn get_live_monitor(state: State<'_, AppState>) -> Result<LiveMonitorP
     let mut connections = Vec::new();
     let mut up_bps = 0u64;
     let mut down_bps = 0u64;
+    let mut memory_bytes = 0u64;
 
     if running {
         if let Ok(client) = ControlClient::new(control_port, &state.control_secret) {
-            if let Ok((conns, up_total, down_total)) = client.get_connections().await {
+            if let Ok((conns, up_total, down_total, mem)) = client.get_connections().await {
                 connections = conns;
+                memory_bytes = mem;
                 if let Ok(mut cursor) = state.traffic_cursor.lock() {
                     let elapsed = cursor.last_at.elapsed().as_secs_f64().max(0.2);
                     if up_total >= cursor.last_up && down_total >= cursor.last_down {
@@ -658,7 +660,7 @@ pub async fn get_live_monitor(state: State<'_, AppState>) -> Result<LiveMonitorP
         traffic: TrafficSample {
             up_bytes_per_sec: up_bps,
             down_bytes_per_sec: down_bps,
-            memory_bytes: 0,
+            memory_bytes,
             active_connections: connections.len(),
         },
         connections,

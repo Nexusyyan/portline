@@ -538,3 +538,25 @@ async fn test_real_singbox_multiport_hotswitch_and_bad_config_rollback() {
     supervisor.stop();
     assert!(!supervisor.is_running());
 }
+
+#[test]
+fn test_singbox_log_level_and_inbound_label_parsing() {
+    use portline_core::control::normalize_inbound_label;
+    use portline_core::supervisor::parse_singbox_log_line;
+
+    let (lvl, msg) = parse_singbox_log_line(
+        "+0800 2026-11-26 00:46:45 INFO inbound/mixed[in-20808]: tcp server started",
+    );
+    assert_eq!(lvl, "INFO");
+    assert_eq!(msg, "inbound/mixed[in-20808]: tcp server started");
+
+    let (lvl2, msg2) = parse_singbox_log_line(
+        "\x1b[31m+0800 2026-11-26 00:46:45 ERROR outbound/vless: dial tcp timeout\x1b[0m",
+    );
+    assert_eq!(lvl2, "ERROR");
+    assert_eq!(msg2, "outbound/vless: dial tcp timeout");
+
+    assert_eq!(normalize_inbound_label("mixed/in-20808"), ":20808");
+    assert_eq!(normalize_inbound_label("in-10809"), ":10809");
+    assert_eq!(normalize_inbound_label("tun/tun-in"), "TUN");
+}

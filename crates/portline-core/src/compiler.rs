@@ -292,8 +292,18 @@ impl SingBox114Compiler {
             }));
         }
 
+        let mut direct_domains: Vec<String> = vec!["cn".to_string()];
+        for rule in input.rules.iter().filter(|r| r.enabled && r.target == "direct") {
+            for p in &rule.patterns {
+                let cleaned = p.trim().trim_start_matches('.').to_ascii_lowercase();
+                if !cleaned.is_empty() && !direct_domains.contains(&cleaned) {
+                    direct_domains.push(cleaned);
+                }
+            }
+        }
+
         let mut dns_rules: Vec<Value> = vec![json!({
-            "domain_suffix": ["cn"],
+            "domain_suffix": direct_domains,
             "server": "dns-local"
         })];
         if input.settings.dns_fake_ip {
@@ -301,24 +311,16 @@ impl SingBox114Compiler {
                 "query_type": ["A", "AAAA"],
                 "server": "dns-fakeip"
             }));
-        } else {
+        } else if added_rule_sets.contains("geoip-cn") {
             dns_rules.push(json!({
                 "action": "evaluate",
                 "server": "dns-local"
             }));
-            if added_rule_sets.contains("geoip-cn") {
-                dns_rules.push(json!({
-                    "rule_set": ["geoip-cn"],
-                    "match_response": true,
-                    "action": "respond"
-                }));
-            } else {
-                dns_rules.push(json!({
-                    "ip_is_private": true,
-                    "match_response": true,
-                    "action": "respond"
-                }));
-            }
+            dns_rules.push(json!({
+                "rule_set": ["geoip-cn"],
+                "match_response": true,
+                "action": "respond"
+            }));
         }
 
         let dns_strategy = match input.settings.dns_strategy.as_str() {
@@ -329,6 +331,7 @@ impl SingBox114Compiler {
         };
 
         let mut route_obj = Map::new();
+        route_obj.insert("find_process".to_string(), json!(true));
         route_obj.insert("default_http_client".to_string(), json!("proxy-http"));
         route_obj.insert("default_domain_resolver".to_string(), json!("dns-local"));
         route_obj.insert("auto_detect_interface".to_string(), json!(true));
