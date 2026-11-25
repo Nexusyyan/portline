@@ -3,7 +3,7 @@ mod state;
 mod tray;
 
 use state::AppState;
-use tauri::{Manager, RunEvent};
+use tauri::{Manager, RunEvent, WindowEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -21,6 +21,20 @@ pub fn run() {
             }
         }))
         .manage(app_state)
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let minimize_to_tray = window
+                    .app_handle()
+                    .try_state::<AppState>()
+                    .and_then(|st| st.store.lock().ok().and_then(|s| s.load_settings().ok()))
+                    .map(|s| s.minimize_to_tray)
+                    .unwrap_or(true);
+                if minimize_to_tray {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(|app| {
             let _ = tray::setup_tray(app.handle());
             Ok(())
@@ -55,6 +69,7 @@ pub fn run() {
             commands::close_all_connections,
             commands::clear_logs,
             commands::restore_netguard_now,
+            commands::hide_to_tray,
         ])
         .build(tauri::generate_context!())
         .expect("Failed to build Portline desktop application");

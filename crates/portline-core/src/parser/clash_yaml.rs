@@ -77,12 +77,18 @@ fn parse_clash_proxy(p: &Yaml<'_>, group: &str) -> Option<NodeIR> {
         "tuic" => Protocol::Tuic,
         "anytls" => Protocol::Anytls,
         "wireguard" => Protocol::Wireguard,
+        "http" => Protocol::Http,
+        "socks5" | "socks" => Protocol::Socks,
         _ => return None,
     };
 
     let mut node = NodeIR::new(next_id(&ptype), protocol, name, &server, port, group);
     node.uuid = yaml_str(p, "uuid");
+    node.username = yaml_str(p, "username");
     node.password = yaml_str(p, "password");
+    if protocol == Protocol::Socks {
+        node.socks_version = Some("5".to_string());
+    }
     node.method = yaml_str(p, "cipher").or_else(|| yaml_str(p, "method"));
     node.flow = yaml_str(p, "flow");
     node.alter_id = yaml_u16(p, "alterId");

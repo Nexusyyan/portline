@@ -213,7 +213,10 @@ impl Store {
         let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
         let mut out = Vec::new();
         for row in rows {
-            if let Ok(node) = serde_json::from_str::<NodeIR>(&row?) {
+            if let Ok(mut node) = serde_json::from_str::<NodeIR>(&row?) {
+                if node.region == "OTHER" || node.region.is_empty() {
+                    node.region = crate::model::infer_region(&node.remark, &node.server);
+                }
                 out.push(node);
             }
         }
@@ -403,7 +406,7 @@ pub fn default_simple_rules() -> Vec<SimpleRoutingRule> {
             ],
             process_names: Vec::new(),
             rule_set: Some("geosite-openai".to_string()),
-            target: "auto:US".to_string(),
+            target: "auto:ALL".to_string(),
             enabled: true,
             priority: 10,
         },

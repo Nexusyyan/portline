@@ -3,9 +3,11 @@ import en from "../locales/en.json";
 import zhCN from "../locales/zh-CN.json";
 import type { NodeIR, SimpleRoutingRule } from "../types";
 import {
+  computeAvailableRegions,
   evaluateRouteSimulation,
   filterAndSortNodes,
   formatBytes,
+  PROTO_BADGES,
   pushRingBuffer,
 } from "./nodes";
 
@@ -156,5 +158,17 @@ describe("Portline frontend utilities & i18n parity", () => {
     expect(formatBytes(0)).toBe("0 B");
     expect(formatBytes(1536)).toBe("1.5 KB");
     expect(formatBytes(10 * 1024 * 1024)).toBe("10.0 MB");
+  });
+
+  it("derives available regions strictly from imported nodes and supports HTTP/SOCKS", () => {
+    const auNodes: NodeIR[] = [
+      { ...SAMPLE_NODES[0], id: "a1", protocol: "http", region: "AU" },
+      { ...SAMPLE_NODES[0], id: "a2", protocol: "socks", region: "AU" },
+      { ...SAMPLE_NODES[0], id: "a3", protocol: "vless", region: "OTHER" },
+    ];
+    const buckets = computeAvailableRegions(auNodes);
+    expect(buckets).toEqual([{ code: "AU", count: 2 }]);
+    expect(PROTO_BADGES.http).toBe("HTTP");
+    expect(PROTO_BADGES.socks).toBe("SOCKS");
   });
 });

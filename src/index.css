@@ -171,6 +171,13 @@
     box-shadow: var(--shadow-none);
   }
 
+  .ui-popover {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    box-shadow: var(--shadow-float);
+  }
+
   .ui-modal {
     background: var(--bg-surface);
     border: 1px solid var(--border-hairline);

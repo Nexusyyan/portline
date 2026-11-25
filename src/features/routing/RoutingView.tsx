@@ -8,6 +8,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { CustomSelect, type SelectGroup } from "../../components/CustomSelect";
 import type { Dict } from "../../i18n";
 import type {
   InboundPort,
@@ -16,7 +17,11 @@ import type {
   RouteMode,
   SimpleRoutingRule,
 } from "../../types";
-import { evaluateRouteSimulation, resolveTargetExit } from "../../utils/nodes";
+import {
+  computeAvailableRegions,
+  evaluateRouteSimulation,
+  resolveTargetExit,
+} from "../../utils/nodes";
 
 interface RoutingViewProps {
   dict: Dict;
@@ -59,13 +64,16 @@ export function RoutingView({
 
   const [newRuleName, setNewRuleName] = useState("");
   const [newRuleDomains, setNewRuleDomains] = useState("");
-  const [newRuleTarget, setNewRuleTarget] = useState("auto:US");
+  const [newRuleTarget, setNewRuleTarget] = useState("auto:ALL");
 
   const [newPortNum, setNewPortNum] = useState("10809");
   const [newPortNote, setNewPortNote] = useState("");
-  const [newPortTarget, setNewPortTarget] = useState("auto:US");
+  const [newPortTarget, setNewPortTarget] = useState("auto:ALL");
 
   const presets = dict.routing.presetTitles as Record<string, string>;
+  const regionNames = dict.routing.regions as Record<string, string>;
+  const availableRegions = useMemo(() => computeAvailableRegions(nodes), [nodes]);
+
   const targetLabels = useMemo(
     () => ({
       direct: dict.routing.optDirect,
@@ -74,6 +82,71 @@ export function RoutingView({
     }),
     [dict]
   );
+
+  const buildSelectGroups = (
+    currentValue: string,
+    includeDirectReject: boolean
+  ): SelectGroup[] => {
+    const autoOptions = availableRegions.map((bucket) => {
+      const name = regionNames[bucket.code] ?? bucket.code;
+      return {
+        value: `auto:${bucket.code}`,
+        label: `${dict.routing.optAutoRegionPrefix} ${name}${dict.routing.optAutoRegionSuffix}`,
+        meta: String(bucket.count),
+      };
+    });
+
+    autoOptions.push({
+      value: "auto:ALL",
+      label: dict.routing.optAutoAll,
+      meta: String(nodes.length),
+    });
+
+    // If a persisted rule points to an auto:<REGION> not currently present,
+    // keep it visible cleanly as a 0-node fallback so the trigger never renders blank.
+    if (
+      currentValue.startsWith("auto:") &&
+      currentValue !== "auto:ALL" &&
+      !autoOptions.some((o) => o.value === currentValue)
+    ) {
+      const code = currentValue.slice("auto:".length).toUpperCase();
+      const name = regionNames[code] ?? code;
+      autoOptions.unshift({
+        value: currentValue,
+        label: `${dict.routing.optAutoRegionPrefix} ${name}${dict.routing.optAutoRegionSuffix}`,
+        meta: "0",
+      });
+    }
+
+    const actionOptions = [{ value: "main", label: dict.routing.optMain }];
+    if (includeDirectReject) {
+      actionOptions.push(
+        { value: "direct", label: dict.routing.optDirect },
+        { value: "reject", label: dict.routing.optReject }
+      );
+    }
+
+    const groups: SelectGroup[] = [
+      { label: dict.routing.optAutoGroup, options: autoOptions },
+      { label: dict.routing.optActionsGroup, options: actionOptions },
+    ];
+
+    if (nodes.length > 0) {
+      groups.push({
+        label: dict.routing.optNodesGroup,
+        options: nodes.map((n) => {
+          const ms = n.realDelayMs ?? n.tcpingMs;
+          return {
+            value: n.id,
+            label: n.remark,
+            meta: ms != null ? `${ms} ms` : undefined,
+          };
+        }),
+      });
+    }
+
+    return groups;
+  };
 
   const simResult = useMemo(
     () =>
@@ -97,36 +170,6 @@ export function RoutingView({
   );
 
   const mainNode = nodes.find((n) => n.id === mainNodeId) ?? nodes[0] ?? null;
-
-  const renderExitSelectOptions = (includeDirectReject: boolean) => (
-    <>
-      <optgroup label={dict.routing.optAutoGroup}>
-        <option value="auto:US">{dict.routing.optAutoUs}</option>
-        <option value="auto:JP">{dict.routing.optAutoJp}</option>
-        <option value="auto:HK">{dict.routing.optAutoHk}</option>
-        <option value="auto:SG">{dict.routing.optAutoSg}</option>
-        <option value="auto:ALL">{dict.routing.optAutoAll}</option>
-      </optgroup>
-      <optgroup label={dict.routing.optActionsGroup}>
-        <option value="main">{dict.routing.optMain}</option>
-        {includeDirectReject && <option value="direct">{dict.routing.optDirect}</option>}
-        {includeDirectReject && <option value="reject">{dict.routing.optReject}</option>}
-      </optgroup>
-      {nodes.length > 0 && (
-        <optgroup label={dict.routing.optNodesGroup}>
-          {nodes.map((n) => {
-            const ms = n.realDelayMs ?? n.tcpingMs;
-            return (
-              <option key={n.id} value={n.id}>
-                {n.remark}
-                {ms != null ? ` (${ms} ms)` : ""}
-              </option>
-            );
-          })}
-        </optgroup>
-      )}
-    </>
-  );
 
   const handleConfirmRule = () => {
     const cleanName = newRuleName.trim();
@@ -156,7 +199,7 @@ export function RoutingView({
   };
 
   const handleAddPort = () => {
-    const port = Number.parseInt(newPortNum, 10);
+    const port = Number.parseInt(newPortNum.trim(), 10);
     if (
       !Number.isFinite(port) ||
       port < 1024 ||
@@ -223,11 +266,17 @@ export function RoutingView({
             />
 
             <div className="flex min-w-[200px] flex-1 items-center gap-1.5">
-              <ArrowRight className="h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" strokeWidth={1.5} />
+              <ArrowRight
+                className="h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]"
+                strokeWidth={1.5}
+              />
               <span className="rounded-[6px] border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-2 py-0.5 font-medium text-[var(--text-primary)]">
                 {simResult.ruleLabel}
               </span>
-              <ArrowRight className="h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" strokeWidth={1.5} />
+              <ArrowRight
+                className="h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]"
+                strokeWidth={1.5}
+              />
               <span
                 className="truncate font-semibold"
                 style={{
@@ -244,16 +293,18 @@ export function RoutingView({
             </div>
 
             <div className="flex items-center gap-1">
-              {["chatgpt.com", "netflix.com", "github.com", "baidu.com"].map((sample) => (
-                <button
-                  key={sample}
-                  type="button"
-                  onClick={() => setSimHost(sample)}
-                  className="rounded-[6px] border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-2 py-0.5 font-mono text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
-                >
-                  {sample}
-                </button>
-              ))}
+              {["chatgpt.com", "netflix.com", "github.com", "baidu.com"].map(
+                (sample) => (
+                  <button
+                    key={sample}
+                    type="button"
+                    onClick={() => setSimHost(sample)}
+                    className="rounded-[6px] border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-2 py-0.5 font-mono text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] cursor-pointer"
+                  >
+                    {sample}
+                  </button>
+                )
+              )}
             </div>
           </div>
         </div>
@@ -270,7 +321,12 @@ export function RoutingView({
             {rules.map((r) => {
               const title = presets[r.id] ?? (locale === "en" ? r.titleEn : r.title);
               const isHit = simResult.matchedRuleId === r.id;
-              const resolved = resolveTargetExit(r.target, nodes, mainNodeId, targetLabels);
+              const resolved = resolveTargetExit(
+                r.target,
+                nodes,
+                mainNodeId,
+                targetLabels
+              );
               const showAutoHint = r.target.startsWith("auto:") && resolved.node !== null;
               return (
                 <div
@@ -289,13 +345,14 @@ export function RoutingView({
                   </div>
 
                   <div className="col-span-5 space-y-1">
-                    <select
+                    <CustomSelect
                       value={r.target}
-                      onChange={(e) => onSaveRule({ ...r, target: e.target.value })}
-                      className="ui-select h-8 w-full px-2.5 text-[12px] cursor-pointer"
-                    >
-                      {renderExitSelectOptions(true)}
-                    </select>
+                      groups={buildSelectGroups(r.target, true)}
+                      onChange={(val) => onSaveRule({ ...r, target: val })}
+                      searchPlaceholder={dict.routing.selectSearchPh}
+                      emptyLabel={dict.routing.selectEmpty}
+                      className="w-full"
+                    />
                     {showAutoHint && resolved.node && (
                       <div
                         className="truncate pl-0.5 font-mono text-[11px] num-tabular"
@@ -395,9 +452,15 @@ export function RoutingView({
             <div className="flex items-center gap-2 text-[11.5px] text-[var(--text-secondary)]">
               <span>{dict.routing.advPortsHint}</span>
               {portsOpen ? (
-                <ChevronDown className="h-4 w-4 text-[var(--text-tertiary)]" strokeWidth={1.5} />
+                <ChevronDown
+                  className="h-4 w-4 text-[var(--text-tertiary)]"
+                  strokeWidth={1.5}
+                />
               ) : (
-                <ChevronRight className="h-4 w-4 text-[var(--text-tertiary)]" strokeWidth={1.5} />
+                <ChevronRight
+                  className="h-4 w-4 text-[var(--text-tertiary)]"
+                  strokeWidth={1.5}
+                />
               )}
             </div>
           </button>
@@ -424,7 +487,10 @@ export function RoutingView({
                   onClick={() => onCopyText(`http://127.0.0.1:${mixedPort}`)}
                   className="ui-btn-secondary h-7 font-mono text-[11.5px]"
                 >
-                  <Copy className="h-3 w-3 text-[var(--text-tertiary)]" strokeWidth={1.5} />
+                  <Copy
+                    className="h-3 w-3 text-[var(--text-tertiary)]"
+                    strokeWidth={1.5}
+                  />
                   {dict.routing.copyUrl}
                 </button>
               </div>
@@ -449,13 +515,15 @@ export function RoutingView({
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <select
+                    <CustomSelect
                       value={p.target}
-                      onChange={(e) => onSavePort({ ...p, target: e.target.value })}
-                      className="ui-select h-7 px-2 text-[12px] cursor-pointer"
-                    >
-                      {renderExitSelectOptions(false)}
-                    </select>
+                      groups={buildSelectGroups(p.target, false)}
+                      onChange={(val) => onSavePort({ ...p, target: val })}
+                      searchPlaceholder={dict.routing.selectSearchPh}
+                      emptyLabel={dict.routing.selectEmpty}
+                      size="sm"
+                      className="w-52"
+                    />
                     <button
                       type="button"
                       onClick={() => onCopyText(`http://127.0.0.1:${p.port}`)}
@@ -480,12 +548,13 @@ export function RoutingView({
                   {dict.routing.addPortLabel}
                 </span>
                 <input
-                  type="number"
-                  min={1024}
-                  max={65535}
+                  type="text"
+                  inputMode="numeric"
                   value={newPortNum}
-                  onChange={(e) => setNewPortNum(e.target.value)}
-                  className="ui-input h-7 w-20 bg-[var(--bg-surface)] px-2 font-mono text-[12px] num-tabular"
+                  onChange={(e) =>
+                    setNewPortNum(e.target.value.replace(/[^0-9]/g, "").slice(0, 5))
+                  }
+                  className="ui-input h-7 w-20 bg-[var(--bg-surface)] px-2.5 font-mono text-[12px] num-tabular"
                 />
                 <input
                   type="text"
@@ -494,13 +563,15 @@ export function RoutingView({
                   placeholder={dict.routing.portNotePh}
                   className="ui-input h-7 w-44 bg-[var(--bg-surface)] px-2.5 text-[12px]"
                 />
-                <select
+                <CustomSelect
                   value={newPortTarget}
-                  onChange={(e) => setNewPortTarget(e.target.value)}
-                  className="ui-select h-7 bg-[var(--bg-surface)] px-2 text-[12px] cursor-pointer"
-                >
-                  {renderExitSelectOptions(false)}
-                </select>
+                  groups={buildSelectGroups(newPortTarget, false)}
+                  onChange={setNewPortTarget}
+                  searchPlaceholder={dict.routing.selectSearchPh}
+                  emptyLabel={dict.routing.selectEmpty}
+                  size="sm"
+                  className="w-52 bg-[var(--bg-surface)]"
+                />
                 <button
                   type="button"
                   onClick={handleAddPort}
@@ -562,13 +633,14 @@ export function RoutingView({
                 <label className="block font-medium text-[var(--text-primary)]">
                   {dict.routing.ruleExitLabel}
                 </label>
-                <select
+                <CustomSelect
                   value={newRuleTarget}
-                  onChange={(e) => setNewRuleTarget(e.target.value)}
-                  className="ui-select h-8 w-full px-2.5 cursor-pointer"
-                >
-                  {renderExitSelectOptions(true)}
-                </select>
+                  groups={buildSelectGroups(newRuleTarget, true)}
+                  onChange={setNewRuleTarget}
+                  searchPlaceholder={dict.routing.selectSearchPh}
+                  emptyLabel={dict.routing.selectEmpty}
+                  className="w-full"
+                />
               </div>
               <div className="flex justify-end gap-2 pt-2">
                 <button

@@ -24,30 +24,52 @@ impl CoreManager {
     }
 
     pub fn binary_path(&self) -> PathBuf {
-        #[cfg(target_os = "windows")]
-        let name = "sing-box.exe";
-        #[cfg(not(target_os = "windows"))]
-        let name = "sing-box";
-        self.core_dir.join(name)
+        self.core_dir.join(core_binary_name())
+    }
+
+    /// Resolves an existing sing-box binary across managed data dir, executable sibling dir,
+    /// and system PATH so users who already own sing-box work out of the box.
+    pub fn resolve_binary_path(&self) -> Option<PathBuf> {
+        let managed = self.binary_path();
+        if managed.exists() {
+            return Some(managed);
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                for cand in [
+                    dir.join(core_binary_name()),
+                    dir.join("core").join(core_binary_name()),
+                ] {
+                    if cand.exists() {
+                        return Some(cand);
+                    }
+                }
+            }
+        }
+        if let Ok(path_var) = std::env::var("PATH") {
+            for dir in std::env::split_paths(&path_var) {
+                let cand = dir.join(core_binary_name());
+                if cand.exists() {
+                    return Some(cand);
+                }
+            }
+        }
+        None
     }
 
     pub fn is_installed(&self) -> bool {
-        self.binary_path().exists()
+        self.resolve_binary_path().is_some()
     }
 
     pub fn sha256_of_binary(&self) -> Result<Option<String>> {
-        let path = self.binary_path();
-        if !path.exists() {
+        let Some(path) = self.resolve_binary_path() else {
             return Ok(None);
-        }
+        };
         Ok(Some(compute_file_sha256(&path)?))
     }
 
     pub fn detect_version(&self) -> Option<String> {
-        let path = self.binary_path();
-        if !path.exists() {
-            return None;
-        }
+        let path = self.resolve_binary_path()?;
         let mut cmd = Command::new(&path);
         cmd.arg("version");
         #[cfg(windows)]
@@ -195,6 +217,17 @@ impl CoreManager {
         let version = self.detect_version().unwrap_or(info.tag_name);
         let bin_sha = compute_file_sha256(&dest)?;
         Ok((version, bin_sha))
+    }
+}
+
+fn core_binary_name() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "sing-box.exe"
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        "sing-box"
     }
 }
 

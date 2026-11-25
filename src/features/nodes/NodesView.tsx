@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ArrowUpDown,
+  Download,
   Gauge,
   Link2,
   Plus,
@@ -12,7 +13,7 @@ import {
   X,
 } from "lucide-react";
 import type { Dict } from "../../i18n";
-import type { NodeIR, SimpleRoutingRule, SubscriptionGroup } from "../../types";
+import type { CoreInfo, NodeIR, SimpleRoutingRule, SubscriptionGroup } from "../../types";
 import {
   delayColorVar,
   filterAndSortNodes,
@@ -24,11 +25,14 @@ import {
 
 interface NodesViewProps {
   dict: Dict;
+  coreInfo: CoreInfo;
   nodes: NodeIR[];
   subscriptions: SubscriptionGroup[];
   rules: SimpleRoutingRule[];
   mainNodeId?: string | null;
   testingKind: "tcping" | "real" | null;
+  downloadingCore: boolean;
+  onDownloadCore: () => Promise<void>;
   onSelectMainNode: (id: string) => void;
   onDeleteNode: (id: string) => void;
   onRunBatchTest: (kind: "tcping" | "real", nodeIds: string[]) => void;
@@ -40,11 +44,14 @@ interface NodesViewProps {
 
 export function NodesView({
   dict,
+  coreInfo,
   nodes,
   subscriptions,
   rules,
   mainNodeId,
   testingKind,
+  downloadingCore,
+  onDownloadCore,
   onSelectMainNode,
   onDeleteNode,
   onRunBatchTest,
@@ -245,6 +252,26 @@ export function NodesView({
           </button>
         </div>
       </div>
+
+      {/* First-Run Auto-Core Banner when official sing-box is not yet present */}
+      {!coreInfo.installed && (
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-[var(--border-hairline)] bg-[var(--bg-subtle)] px-5 py-2 text-[12px]">
+          <span className="text-[var(--text-secondary)]">
+            {dict.nodes.coreBannerText}
+          </span>
+          <button
+            type="button"
+            disabled={downloadingCore}
+            onClick={() => void onDownloadCore()}
+            className="ui-btn-primary h-7 shrink-0 text-[11.5px]"
+          >
+            <Download className="h-3.5 w-3.5" strokeWidth={1.5} />
+            {downloadingCore
+              ? dict.nodes.coreBannerDownloading
+              : dict.nodes.coreBannerBtn}
+          </button>
+        </div>
+      )}
 
       {/* Non-blocking Test Progress Strip */}
       {testingKind && (

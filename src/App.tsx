@@ -52,6 +52,11 @@ const DEFAULT_SETTINGS: AppSettings = {
   systemProxyEnabled: false,
   tunEnabled: false,
   autoStartCore: true,
+  minimizeToTray: true,
+  dnsLocalServer: "223.5.5.5",
+  dnsRemoteServer: "https://1.1.1.1/dns-query",
+  dnsStrategy: "prefer_ipv4",
+  dnsFakeIp: false,
   latencyTestUrl: "https://www.gstatic.com/generate_204",
   customJsonOverride: null,
 };
@@ -104,6 +109,7 @@ export default function App() {
 
   const [testingKind, setTestingKind] = useState<"tcping" | "real" | null>(null);
   const [coreBusy, setCoreBusy] = useState(false);
+  const [downloadingCore, setDownloadingCore] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const dict = useMemo(() => getDict(locale), [locale]);
@@ -262,6 +268,9 @@ export default function App() {
         setCoreInfo(info);
         pushToast(dict.toast.coreStopped, "neutral");
       } else {
+        if (!coreInfo.installed) {
+          pushToast(dict.toast.coreAutoDownloading, "neutral");
+        }
         const [info, report] = await api.startCore();
         setCoreInfo(info);
         setPreflight(report);
@@ -356,6 +365,9 @@ export default function App() {
       if (kind === "tcping") {
         await api.runBatchTcping(nodeIds);
       } else {
+        if (!coreInfo.installed) {
+          pushToast(dict.toast.coreAutoDownloading, "neutral");
+        }
         await api.runBatchRealDelay(nodeIds);
       }
       await reloadBootstrap();
@@ -439,12 +451,15 @@ export default function App() {
 
   const handleDownloadCore = async () => {
     if (!api.isDesktop()) return;
+    setDownloadingCore(true);
     try {
       const info = await api.downloadOfficialCore();
       setCoreInfo(info);
       pushToast(dict.toast.coreDownloaded);
     } catch (err) {
       pushToast(String(err), "err");
+    } finally {
+      setDownloadingCore(false);
     }
   };
 
@@ -522,11 +537,14 @@ export default function App() {
           {activeTab === "nodes" && (
             <NodesView
               dict={dict}
+              coreInfo={coreInfo}
               nodes={nodes}
               subscriptions={subscriptions}
               rules={rules}
               mainNodeId={settings.mainNodeId}
               testingKind={testingKind}
+              downloadingCore={downloadingCore}
+              onDownloadCore={handleDownloadCore}
               onSelectMainNode={(id) => void handleSelectMainNode(id)}
               onDeleteNode={(id) => void handleDeleteNode(id)}
               onRunBatchTest={(k, ids) => void handleRunBatchTest(k, ids)}

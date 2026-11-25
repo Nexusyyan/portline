@@ -261,31 +261,72 @@ impl SingBox114Compiler {
             RouteMode::Rule | RouteMode::Global => "main-exit",
         };
 
-        // Strict sing-box v1.14+ DNS section with typed servers, evaluate action,
-        // and explicit match_response: true on response-based IP matching rules.
-        let mut dns_rules: Vec<Value> = vec![
-            json!({
-                "domain_suffix": ["cn"],
-                "server": "dns-local"
-            }),
-            json!({
-                "action": "evaluate",
-                "server": "dns-local"
-            }),
-        ];
-        if added_rule_sets.contains("geoip-cn") {
+        // Strict sing-box v1.14+ DNS section honoring user-configured local/remote DNS,
+        // strategy, and optional FakeIP mode.
+        let mut dns_servers: Vec<Value> = Vec::new();
+        let (local_srv, local_needs_boot) = compile_dns_server(
+            "dns-local",
+            &input.settings.dns_local_server,
+            None,
+        );
+        let (remote_srv, remote_needs_boot) = compile_dns_server(
+            "dns-remote",
+            &input.settings.dns_remote_server,
+            Some("main-exit"),
+        );
+        if local_needs_boot || remote_needs_boot {
+            dns_servers.push(json!({
+                "type": "udp",
+                "tag": "dns-bootstrap",
+                "server": "223.5.5.5"
+            }));
+        }
+        dns_servers.push(local_srv);
+        dns_servers.push(remote_srv);
+        if input.settings.dns_fake_ip {
+            dns_servers.push(json!({
+                "type": "fakeip",
+                "tag": "dns-fakeip",
+                "inet4_range": "198.18.0.0/15",
+                "inet6_range": "fc00::/18"
+            }));
+        }
+
+        let mut dns_rules: Vec<Value> = vec![json!({
+            "domain_suffix": ["cn"],
+            "server": "dns-local"
+        })];
+        if input.settings.dns_fake_ip {
             dns_rules.push(json!({
-                "rule_set": ["geoip-cn"],
-                "match_response": true,
-                "action": "respond"
+                "query_type": ["A", "AAAA"],
+                "server": "dns-fakeip"
             }));
         } else {
             dns_rules.push(json!({
-                "ip_is_private": true,
-                "match_response": true,
-                "action": "respond"
+                "action": "evaluate",
+                "server": "dns-local"
             }));
+            if added_rule_sets.contains("geoip-cn") {
+                dns_rules.push(json!({
+                    "rule_set": ["geoip-cn"],
+                    "match_response": true,
+                    "action": "respond"
+                }));
+            } else {
+                dns_rules.push(json!({
+                    "ip_is_private": true,
+                    "match_response": true,
+                    "action": "respond"
+                }));
+            }
         }
+
+        let dns_strategy = match input.settings.dns_strategy.as_str() {
+            "prefer_ipv4" | "prefer_ipv6" | "ipv4_only" | "ipv6_only" => {
+                input.settings.dns_strategy.as_str()
+            }
+            _ => "prefer_ipv4",
+        };
 
         let mut route_obj = Map::new();
         route_obj.insert("default_http_client".to_string(), json!("proxy-http"));
@@ -315,12 +356,10 @@ impl SingBox114Compiler {
         root.insert(
             "dns".to_string(),
             json!({
-                "servers": [
-                    { "type": "udp", "tag": "dns-local", "server": "223.5.5.5" },
-                    { "type": "https", "tag": "dns-remote", "server": "1.1.1.1", "path": "/dns-query", "detour": "main-exit" }
-                ],
+                "servers": dns_servers,
                 "rules": dns_rules,
-                "final": if input.settings.route_mode == RouteMode::Direct { "dns-local" } else { "dns-remote" }
+                "final": if input.settings.route_mode == RouteMode::Direct { "dns-local" } else { "dns-remote" },
+                "strategy": dns_strategy
             }),
         );
         if !endpoints.is_empty() {
@@ -649,6 +688,34 @@ pub fn compile_proxy_outbound(node: &NodeIR) -> Value {
                 json!(node.password.as_deref().unwrap_or("")),
             );
         }
+        Protocol::Http => {
+            if let Some(ref user) = node.username {
+                if !user.is_empty() {
+                    obj.insert("username".to_string(), json!(user));
+                }
+            }
+            if let Some(ref pass) = node.password {
+                if !pass.is_empty() {
+                    obj.insert("password".to_string(), json!(pass));
+                }
+            }
+        }
+        Protocol::Socks => {
+            obj.insert(
+                "version".to_string(),
+                json!(node.socks_version.as_deref().unwrap_or("5")),
+            );
+            if let Some(ref user) = node.username {
+                if !user.is_empty() {
+                    obj.insert("username".to_string(), json!(user));
+                }
+            }
+            if let Some(ref pass) = node.password {
+                if !pass.is_empty() {
+                    obj.insert("password".to_string(), json!(pass));
+                }
+            }
+        }
         Protocol::Wireguard => {}
     }
 
@@ -721,6 +788,74 @@ pub fn compile_wireguard_endpoint(node: &NodeIR) -> Value {
     }
     obj.insert("peers".to_string(), Value::Array(vec![Value::Object(peer)]));
     Value::Object(obj)
+}
+
+fn compile_dns_server(tag: &str, raw_spec: &str, detour: Option<&str>) -> (Value, bool) {
+    let spec = raw_spec.trim();
+    let fallback_ip = if detour.is_some() { "1.1.1.1" } else { "223.5.5.5" };
+    let effective = if spec.is_empty() { fallback_ip } else { spec };
+
+    let mut obj = Map::new();
+    obj.insert("tag".to_string(), json!(tag));
+    let mut needs_bootstrap = false;
+
+    if let Ok(parsed) = url::Url::parse(effective) {
+        let scheme = parsed.scheme().to_ascii_lowercase();
+        let host = parsed.host_str().unwrap_or(fallback_ip).to_string();
+        let is_domain = host.parse::<std::net::IpAddr>().is_err();
+        match scheme.as_str() {
+            "https" => {
+                obj.insert("type".to_string(), json!("https"));
+                obj.insert("server".to_string(), json!(host));
+                if let Some(port) = parsed.port() {
+                    obj.insert("server_port".to_string(), json!(port));
+                }
+                let path = if parsed.path().is_empty() || parsed.path() == "/" {
+                    "/dns-query"
+                } else {
+                    parsed.path()
+                };
+                obj.insert("path".to_string(), json!(path));
+                if is_domain {
+                    obj.insert("domain_resolver".to_string(), json!("dns-bootstrap"));
+                    needs_bootstrap = true;
+                }
+            }
+            "tls" => {
+                obj.insert("type".to_string(), json!("tls"));
+                obj.insert("server".to_string(), json!(host));
+                if let Some(port) = parsed.port() {
+                    obj.insert("server_port".to_string(), json!(port));
+                }
+                if is_domain {
+                    obj.insert("domain_resolver".to_string(), json!("dns-bootstrap"));
+                    needs_bootstrap = true;
+                }
+            }
+            "tcp" => {
+                obj.insert("type".to_string(), json!("tcp"));
+                obj.insert("server".to_string(), json!(host));
+                if let Some(port) = parsed.port() {
+                    obj.insert("server_port".to_string(), json!(port));
+                }
+            }
+            _ => {
+                obj.insert("type".to_string(), json!("udp"));
+                obj.insert("server".to_string(), json!(host));
+                if let Some(port) = parsed.port() {
+                    obj.insert("server_port".to_string(), json!(port));
+                }
+            }
+        }
+    } else {
+        obj.insert("type".to_string(), json!("udp"));
+        obj.insert("server".to_string(), json!(effective));
+    }
+
+    if let Some(d) = detour {
+        obj.insert("detour".to_string(), json!(d));
+    }
+    (Value::Object(obj), needs_bootstrap)
 }
 
 fn merge_json(base: &mut Value, patch: Value) {

@@ -151,6 +151,10 @@ export const api = {
     return invoke<CoreInfo>("restore_netguard_now");
   },
 
+  async hideToTray(): Promise<void> {
+    if (isTauriEnv()) await invoke("hide_to_tray");
+  },
+
   windowControls: {
     async minimize(): Promise<void> {
       if (isTauriEnv()) await getCurrentWindow().minimize();

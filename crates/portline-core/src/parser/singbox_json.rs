@@ -130,6 +130,8 @@ fn parse_outbound_obj(item: &Value, group: &str) -> Option<NodeIR> {
         "tuic" => Protocol::Tuic,
         "anytls" => Protocol::Anytls,
         "wireguard" => Protocol::Wireguard,
+        "http" => Protocol::Http,
+        "socks" => Protocol::Socks,
         _ => return None,
     };
 
@@ -144,8 +146,16 @@ fn parse_outbound_obj(item: &Value, group: &str) -> Option<NodeIR> {
 
     let mut node = NodeIR::new(next_id(p_type), protocol, remark, server, port, group);
     node.uuid = item.get("uuid").and_then(|s| s.as_str()).map(|s| s.to_string());
+    node.username = item
+        .get("username")
+        .and_then(|s| s.as_str())
+        .map(|s| s.to_string());
     node.password = item
         .get("password")
+        .and_then(|s| s.as_str())
+        .map(|s| s.to_string());
+    node.socks_version = item
+        .get("version")
         .and_then(|s| s.as_str())
         .map(|s| s.to_string());
     node.method = item.get("method").and_then(|s| s.as_str()).map(|s| s.to_string());

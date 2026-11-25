@@ -107,7 +107,16 @@ fn build_all_8_protocol_nodes() -> Vec<NodeIR> {
     wg.wg_peer_public_key = Some("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=".to_string());
     wg.wg_local_address = vec!["10.0.0.2/32".to_string()];
 
-    vec![vless, vmess, trojan, ss, hy2, tuic, anytls, wg]
+    let mut http_n = NodeIR::new("n-http", Protocol::Http, "AU-Sydney-HTTP", "au1.example.com", 8080, "Proxy");
+    http_n.username = Some("user".to_string());
+    http_n.password = Some("pass".to_string());
+
+    let mut socks_n = NodeIR::new("n-socks", Protocol::Socks, "AU-Melbourne-SOCKS5", "au2.example.com", 1080, "Proxy");
+    socks_n.socks_version = Some("5".to_string());
+    socks_n.username = Some("suser".to_string());
+    socks_n.password = Some("spass".to_string());
+
+    vec![vless, vmess, trojan, ss, hy2, tuic, anytls, wg, http_n, socks_n]
 }
 
 #[test]
@@ -209,19 +218,30 @@ fn test_multi_format_parsers_uri_base64_json_yaml() {
         "tuic://22222222-2222-2222-2222-222222222222:tuicpass@sg1.example.com:20443?congestion_control=bbr#SG-TUIC",
         "anytls://anypass@us2.example.com:443?sni=us2.example.com#US-AnyTLS",
         "wireguard://PRIVKEY@1.2.3.4:51820?publickey=PUBKEY&address=10.0.0.2/32#DE-WG",
+        "http://alice:secret@au1.example.com:8080#\u{1f1e6}\u{1f1fa}%20oracle-arm-http",
+        "https://bob:pw@au2.example.com:443#AU-HTTPS-Proxy",
+        "socks5://suser:spass@au3.example.com:1080#AU-SOCKS5",
+        "socks://c3VzZXI6c3Bhc3M=@au4.example.com:1080#AU-V2rayN-SOCKS",
     ]
     .join("\n");
 
-    // 1. Direct URI batch
+    // 1. Direct URI batch including HTTP, HTTPS, SOCKS5, and Base64 SOCKS
     let direct = parse_payload(&raw_uris, "Imported").expect("parse direct");
-    assert_eq!(direct.nodes.len(), 6);
+    assert_eq!(direct.nodes.len(), 10);
     assert_eq!(direct.nodes[0].region, "JP");
     assert_eq!(direct.nodes[2].region, "US");
+    assert_eq!(direct.nodes[6].protocol, Protocol::Http);
+    assert_eq!(direct.nodes[6].region, "AU");
+    assert_eq!(direct.nodes[6].username.as_deref(), Some("alice"));
+    assert_eq!(direct.nodes[7].tls.as_ref().map(|t| t.enabled), Some(true));
+    assert_eq!(direct.nodes[8].protocol, Protocol::Socks);
+    assert_eq!(direct.nodes[9].username.as_deref(), Some("suser"));
+    assert_eq!(direct.nodes[9].password.as_deref(), Some("spass"));
 
     // 2. Base64 subscription payload
     let b64 = STANDARD.encode(raw_uris.as_bytes());
     let from_b64 = parse_payload(&b64, "Sub").expect("parse base64");
-    assert_eq!(from_b64.nodes.len(), 6);
+    assert_eq!(from_b64.nodes.len(), 10);
 
     // 3. Clash YAML payload
     let yaml = r#"
@@ -258,7 +278,7 @@ fn test_portable_mode_and_sqlite_store() {
 
     let nodes = build_all_8_protocol_nodes();
     store.upsert_nodes(&nodes).expect("upsert");
-    assert_eq!(store.list_nodes().expect("list").len(), 8);
+    assert_eq!(store.list_nodes().expect("list").len(), 10);
 }
 
 #[derive(Default)]
@@ -377,10 +397,19 @@ fn test_singbox_v114_all_8_protocols_strict_check() {
         allow_lan: false,
     }];
 
-    for mode in [RouteMode::Rule, RouteMode::Global, RouteMode::Direct] {
+    for (mode, fake_ip, local_dns) in [
+        (RouteMode::Rule, false, "223.5.5.5"),
+        (RouteMode::Rule, true, "https://dns.alidns.com/dns-query"),
+        (RouteMode::Global, false, "119.29.29.29"),
+        (RouteMode::Direct, false, "223.5.5.5"),
+    ] {
         let settings = AppSettings {
             route_mode: mode,
             main_node_id: Some("n-vless".to_string()),
+            dns_local_server: local_dns.to_string(),
+            dns_remote_server: "https://1.1.1.1/dns-query".to_string(),
+            dns_strategy: "prefer_ipv4".to_string(),
+            dns_fake_ip: fake_ip,
             ..Default::default()
         };
         let compiled = SingBox114Compiler::compile(&CompileInput {

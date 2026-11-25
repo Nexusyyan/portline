@@ -458,7 +458,7 @@ pub fn compile_preview(state: State<'_, AppState>) -> Result<CompileOutput, Stri
 }
 
 #[tauri::command]
-pub fn run_preflight_check(
+pub async fn run_preflight_check(
     state: State<'_, AppState>,
     simulate_bad: bool,
 ) -> Result<PreflightReport, String> {
@@ -467,20 +467,19 @@ pub fn run_preflight_check(
         compiled.config["outbounds"] =
             serde_json::json!([{ "type": "invalid_protocol_test", "tag": "broken-test" }]);
     }
-    let bin = state.core_manager.binary_path();
-    if !bin.exists() {
-        if simulate_bad {
+    let bin = match state.core_manager.resolve_binary_path() {
+        Some(p) => p,
+        None if simulate_bad => {
             return Ok(PreflightReport {
                 ok: false,
                 exit_code: 1,
                 stdout: String::new(),
-                stderr: "Simulated bad config rejected (install sing-box binary for live check -c)"
-                    .to_string(),
+                stderr: "Simulated bad config rejected before core swap".to_string(),
                 deprecated_warnings: Vec::new(),
             });
         }
-        return Err("sing-box binary is not installed yet".to_string());
-    }
+        None => state.ensure_core_binary().await?,
+    };
     let report = SingBox114Compiler::preflight_check(&bin, &compiled.config)
         .map_err(|e| e.to_string())?;
     state.push_log(
@@ -495,12 +494,8 @@ pub fn run_preflight_check(
 }
 
 #[tauri::command]
-pub fn start_core(state: State<'_, AppState>) -> Result<(CoreInfo, PreflightReport), String> {
-    let bin = state.core_manager.binary_path();
-    if !bin.exists() {
-        return Err("Official sing-box binary is not installed. Download or import it in Core Config."
-            .to_string());
-    }
+pub async fn start_core(state: State<'_, AppState>) -> Result<(CoreInfo, PreflightReport), String> {
+    let bin = state.ensure_core_binary().await?;
     let compiled = state.compile_current()?;
     let report = {
         let mut sup = state
@@ -583,11 +578,7 @@ pub async fn run_batch_real_delay(
     state: State<'_, AppState>,
     node_ids: Vec<String>,
 ) -> Result<Vec<LatencyResult>, String> {
-    let bin = state.core_manager.binary_path();
-    if !bin.exists() {
-        return Err("Install official sing-box binary first to run isolated real-delay tests."
-            .to_string());
-    }
+    let bin = state.ensure_core_binary().await?;
     let (targets, test_url) = {
         let store = state.store.lock().map_err(|_| "store lock poisoned".to_string())?;
         let settings = store.load_settings().map_err(|e| e.to_string())?;
@@ -722,4 +713,9 @@ pub fn restore_netguard_now(state: State<'_, AppState>) -> Result<CoreInfo, Stri
     }
     state.push_log("INFO", "netguard: manual OS proxy & DNS restoration completed");
     Ok(state.build_core_info())
+}
+
+#[tauri::command]
+pub fn hide_to_tray(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.hide().map_err(|e| e.to_string())
 }

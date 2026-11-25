@@ -122,11 +122,16 @@ impl AppState {
             .map(|g| g.is_armed())
             .unwrap_or(false);
 
+        let bin_path = self
+            .core_manager
+            .resolve_binary_path()
+            .unwrap_or_else(|| self.core_manager.binary_path());
+
         CoreInfo {
             installed,
             running,
             version,
-            binary_path: self.core_manager.binary_path().to_string_lossy().to_string(),
+            binary_path: bin_path.to_string_lossy().to_string(),
             sha256,
             portable_mode: self.paths.portable_mode,
             data_dir: self.paths.root_dir.to_string_lossy().to_string(),
@@ -135,13 +140,42 @@ impl AppState {
         }
     }
 
+    /// Returns an installed sing-box path if available, or seamlessly downloads and verifies
+    /// the latest official release on first use so users never hit a missing-binary dead end.
+    pub async fn ensure_core_binary(&self) -> Result<std::path::PathBuf, String> {
+        if let Some(existing) = self.core_manager.resolve_binary_path() {
+            return Ok(existing);
+        }
+        self.push_log(
+            "INFO",
+            "core-manager: sing-box not found locally; auto-downloading latest official release...",
+        );
+        let (ver, sha) = self
+            .core_manager
+            .download_official_core(None)
+            .await
+            .map_err(|e| format!("Auto-download sing-box failed: {}", e))?;
+        self.push_log(
+            "INFO",
+            format!(
+                "core-manager: auto-installed {} (sha256: {}...)",
+                ver,
+                &sha[..12.min(sha.len())]
+            ),
+        );
+        Ok(self.core_manager.binary_path())
+    }
+
     pub fn reload_core_if_running(&self) -> Result<Option<PreflightReport>, String> {
         let running = self
             .supervisor
             .lock()
             .map(|mut s| s.is_running())
             .unwrap_or(false);
-        if !running || !self.core_manager.is_installed() {
+        let Some(bin_path) = self.core_manager.resolve_binary_path() else {
+            return Ok(None);
+        };
+        if !running {
             return Ok(None);
         }
         let compiled = self.compile_current()?;
@@ -150,7 +184,7 @@ impl AppState {
             .lock()
             .map_err(|_| "supervisor lock poisoned".to_string())?;
         let report = sup
-            .apply_config(&self.core_manager.binary_path(), compiled.config)
+            .apply_config(&bin_path, compiled.config)
             .map_err(|e| e.to_string())?;
         Ok(Some(report))
     }

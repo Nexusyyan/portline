@@ -11,7 +11,26 @@ export const PROTO_BADGES: Record<Protocol, string> = {
   tuic: "TUIC",
   anytls: "ANYTLS",
   wireguard: "WG",
+  http: "HTTP",
+  socks: "SOCKS",
 };
+
+export interface RegionBucket {
+  code: string;
+  count: number;
+}
+
+export function computeAvailableRegions(nodes: NodeIR[]): RegionBucket[] {
+  const counts = new Map<string, number>();
+  for (const n of nodes) {
+    const code = (n.region || "OTHER").toUpperCase();
+    if (code === "OTHER" || !code) continue;
+    counts.set(code, (counts.get(code) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .map(([code, count]) => ({ code, count }))
+    .sort((a, b) => b.count - a.count || a.code.localeCompare(b.code));
+}
 
 export function filterAndSortNodes(
   nodes: NodeIR[],

@@ -12,6 +12,8 @@ pub enum Protocol {
     Tuic,
     Anytls,
     Wireguard,
+    Http,
+    Socks,
 }
 
 impl Protocol {
@@ -25,6 +27,8 @@ impl Protocol {
             Protocol::Tuic => "tuic",
             Protocol::Anytls => "anytls",
             Protocol::Wireguard => "wireguard",
+            Protocol::Http => "http",
+            Protocol::Socks => "socks",
         }
     }
 
@@ -38,6 +42,8 @@ impl Protocol {
             Protocol::Tuic => "TUIC",
             Protocol::Anytls => "ANYTLS",
             Protocol::Wireguard => "WG",
+            Protocol::Http => "HTTP",
+            Protocol::Socks => "SOCKS",
         }
     }
 }
@@ -87,7 +93,11 @@ pub struct NodeIR {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uuid: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub socks_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub method: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -154,7 +164,9 @@ impl NodeIR {
             group: group.into(),
             region,
             uuid: None,
+            username: None,
             password: None,
+            socks_version: None,
             method: None,
             flow: None,
             alter_id: None,
@@ -181,16 +193,58 @@ impl NodeIR {
     }
 }
 
+fn has_code_token(text: &str, code: &str) -> bool {
+    text.split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|tok| tok.eq_ignore_ascii_case(code))
+}
+
 pub fn infer_region(remark: &str, server: &str) -> String {
-    let combined = format!("{} {}", remark.to_ascii_uppercase(), server.to_ascii_uppercase());
-    // Match both ASCII codes and UTF-8 Chinese/Unicode region hints via ASCII escapes.
-    if combined.contains("US")
-        || combined.contains("USA")
-        || combined.contains("UNITED STATES")
-        || combined.contains("LOS ANGELES")
-        || combined.contains("SAN JOSE")
-        || combined.contains("SEATTLE")
-        || combined.contains("NEW YORK")
+    let upper = format!("{} {}", remark.to_ascii_uppercase(), server.to_ascii_uppercase());
+
+    // 1. Regional indicator flag emojis (pure 7-bit ASCII Unicode escapes).
+    let flags: &[(&str, &str)] = &[
+        ("\u{1f1e6}\u{1f1fa}", "AU"),
+        ("\u{1f1fa}\u{1f1f8}", "US"),
+        ("\u{1f1ef}\u{1f1f5}", "JP"),
+        ("\u{1f1ed}\u{1f1f0}", "HK"),
+        ("\u{1f1f8}\u{1f1ec}", "SG"),
+        ("\u{1f1f9}\u{1f1fc}", "TW"),
+        ("\u{1f1e9}\u{1f1ea}", "DE"),
+        ("\u{1f1ec}\u{1f1e7}", "UK"),
+        ("\u{1f1f0}\u{1f1f7}", "KR"),
+        ("\u{1f1e8}\u{1f1e6}", "CA"),
+        ("\u{1f1f3}\u{1f1f1}", "NL"),
+        ("\u{1f1eb}\u{1f1f7}", "FR"),
+        ("\u{1f1ee}\u{1f1f3}", "IN"),
+        ("\u{1f1f7}\u{1f1fa}", "RU"),
+        ("\u{1f1f9}\u{1f1f7}", "TR"),
+    ];
+    for (flag, code) in flags {
+        if remark.contains(flag) {
+            return (*code).to_string();
+        }
+    }
+
+    // 2. Explicit country/city tokens and localized names.
+    if has_code_token(&upper, "AU")
+        || upper.contains("AUSTRALIA")
+        || upper.contains("SYDNEY")
+        || upper.contains("MELBOURNE")
+        || remark.contains("\u{6fb3}\u{5927}\u{5229}\u{4e9a}")
+        || remark.contains("\u{6fb3}\u{6d32}")
+        || remark.contains("\u{6089}\u{5c3c}")
+        || remark.contains("\u{58a8}\u{5c14}\u{672c}")
+    {
+        return "AU".to_string();
+    }
+    if has_code_token(&upper, "US")
+        || has_code_token(&upper, "USA")
+        || upper.contains("UNITED STATES")
+        || upper.contains("LOS ANGELES")
+        || upper.contains("SAN JOSE")
+        || upper.contains("SEATTLE")
+        || upper.contains("NEW YORK")
+        || upper.contains("SILICON VALLEY")
         || remark.contains("\u{7f8e}\u{56fd}")
         || remark.contains("\u{6d1b}\u{6749}\u{77f6}")
         || remark.contains("\u{5723}\u{4f55}\u{585e}")
@@ -199,53 +253,91 @@ pub fn infer_region(remark: &str, server: &str) -> String {
     {
         return "US".to_string();
     }
-    if combined.contains("JP")
-        || combined.contains("JAPAN")
-        || combined.contains("TOKYO")
-        || combined.contains("OSAKA")
+    if has_code_token(&upper, "JP")
+        || upper.contains("JAPAN")
+        || upper.contains("TOKYO")
+        || upper.contains("OSAKA")
         || remark.contains("\u{65e5}\u{672c}")
         || remark.contains("\u{4e1c}\u{4eac}")
         || remark.contains("\u{5927}\u{962a}")
     {
         return "JP".to_string();
     }
-    if combined.contains("HK")
-        || combined.contains("HONG KONG")
-        || combined.contains("HONGKONG")
+    if has_code_token(&upper, "HK")
+        || upper.contains("HONG KONG")
+        || upper.contains("HONGKONG")
         || remark.contains("\u{9999}\u{6e2f}")
     {
         return "HK".to_string();
     }
-    if combined.contains("SG")
-        || combined.contains("SINGAPORE")
+    if has_code_token(&upper, "SG")
+        || upper.contains("SINGAPORE")
         || remark.contains("\u{65b0}\u{52a0}\u{5761}")
         || remark.contains("\u{72ee}\u{57ce}")
     {
         return "SG".to_string();
     }
-    if combined.contains("TW")
-        || combined.contains("TAIWAN")
-        || combined.contains("TAIPEI")
+    if has_code_token(&upper, "TW")
+        || upper.contains("TAIWAN")
+        || upper.contains("TAIPEI")
         || remark.contains("\u{53f0}\u{6e7e}")
         || remark.contains("\u{53f0}\u{5317}")
     {
         return "TW".to_string();
     }
-    if combined.contains("DE")
-        || combined.contains("GERMANY")
-        || combined.contains("FRANKFURT")
+    if has_code_token(&upper, "DE")
+        || upper.contains("GERMANY")
+        || upper.contains("FRANKFURT")
         || remark.contains("\u{5fb7}\u{56fd}")
         || remark.contains("\u{6cd5}\u{5170}\u{514b}\u{798f}")
     {
         return "DE".to_string();
     }
-    if combined.contains("UK")
-        || combined.contains("LONDON")
-        || combined.contains("BRITAIN")
+    if has_code_token(&upper, "UK")
+        || has_code_token(&upper, "GB")
+        || upper.contains("LONDON")
+        || upper.contains("BRITAIN")
         || remark.contains("\u{82f1}\u{56fd}")
         || remark.contains("\u{4f26}\u{6566}")
     {
         return "UK".to_string();
+    }
+    if has_code_token(&upper, "KR")
+        || upper.contains("KOREA")
+        || upper.contains("SEOUL")
+        || remark.contains("\u{97e9}\u{56fd}")
+        || remark.contains("\u{9996}\u{5c14}")
+    {
+        return "KR".to_string();
+    }
+    if has_code_token(&upper, "CA")
+        || upper.contains("CANADA")
+        || upper.contains("TORONTO")
+        || upper.contains("VANCOUVER")
+        || remark.contains("\u{52a0}\u{62ff}\u{5927}")
+    {
+        return "CA".to_string();
+    }
+    if has_code_token(&upper, "NL")
+        || upper.contains("NETHERLANDS")
+        || upper.contains("AMSTERDAM")
+        || remark.contains("\u{8377}\u{5170}")
+    {
+        return "NL".to_string();
+    }
+    if has_code_token(&upper, "FR")
+        || upper.contains("FRANCE")
+        || upper.contains("PARIS")
+        || remark.contains("\u{6cd5}\u{56fd}")
+    {
+        return "FR".to_string();
+    }
+    if has_code_token(&upper, "IN")
+        || upper.contains("INDIA")
+        || upper.contains("MUMBAI")
+        || remark.contains("\u{5370}\u{5ea6}")
+    {
+        return "IN".to_string();
     }
     "OTHER".to_string()
 }
@@ -310,6 +402,22 @@ impl RouteMode {
     }
 }
 
+fn default_true() -> bool {
+    true
+}
+
+fn default_dns_local() -> String {
+    "223.5.5.5".to_string()
+}
+
+fn default_dns_remote() -> String {
+    "https://1.1.1.1/dns-query".to_string()
+}
+
+fn default_dns_strategy() -> String {
+    "prefer_ipv4".to_string()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -324,6 +432,16 @@ pub struct AppSettings {
     pub system_proxy_enabled: bool,
     pub tun_enabled: bool,
     pub auto_start_core: bool,
+    #[serde(default = "default_true")]
+    pub minimize_to_tray: bool,
+    #[serde(default = "default_dns_local")]
+    pub dns_local_server: String,
+    #[serde(default = "default_dns_remote")]
+    pub dns_remote_server: String,
+    #[serde(default = "default_dns_strategy")]
+    pub dns_strategy: String,
+    #[serde(default)]
+    pub dns_fake_ip: bool,
     pub latency_test_url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_json_override: Option<String>,
@@ -342,6 +460,11 @@ impl Default for AppSettings {
             system_proxy_enabled: false,
             tun_enabled: false,
             auto_start_core: true,
+            minimize_to_tray: true,
+            dns_local_server: default_dns_local(),
+            dns_remote_server: default_dns_remote(),
+            dns_strategy: default_dns_strategy(),
+            dns_fake_ip: false,
             latency_test_url: "https://www.gstatic.com/generate_204".to_string(),
             custom_json_override: None,
         }

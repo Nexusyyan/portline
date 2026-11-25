@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 pub fn try_decode_base64_text(input: &str) -> Option<String> {
     let compact: String = input.chars().filter(|c| !c.is_whitespace()).collect();
-    if compact.len() < 8 {
+    if compact.len() < 4 {
         return None;
     }
     let engines = [&STANDARD, &STANDARD_NO_PAD, &URL_SAFE, &URL_SAFE_NO_PAD];
@@ -192,6 +192,15 @@ pub fn parse_single_uri(uri: &str, default_group: &str) -> Result<NodeIR> {
         parse_anytls(uri, default_group)
     } else if lower.starts_with("wg://") || lower.starts_with("wireguard://") {
         parse_wireguard(uri, default_group)
+    } else if lower.starts_with("http://") || lower.starts_with("https://") {
+        parse_http_proxy(uri, default_group)
+    } else if lower.starts_with("socks://")
+        || lower.starts_with("socks5://")
+        || lower.starts_with("socks5h://")
+        || lower.starts_with("socks4://")
+        || lower.starts_with("socks4a://")
+    {
+        parse_socks_proxy(uri, default_group)
     } else {
         Err(anyhow!("Unsupported URI scheme"))
     }
@@ -498,4 +507,93 @@ fn parse_wireguard(uri: &str, group: &str) -> Result<NodeIR> {
     });
     node.raw_uri = Some(uri.to_string());
     Ok(node)
+}
+
+fn parse_http_proxy(uri: &str, group: &str) -> Result<NodeIR> {
+    let is_https = uri.to_ascii_lowercase().starts_with("https://");
+    let url = Url::parse(uri).context("Invalid HTTP(S) proxy URI")?;
+    let server = url
+        .host_str()
+        .ok_or_else(|| anyhow!("HTTP proxy missing host"))?
+        .to_string();
+    let port = url.port().unwrap_or(if is_https { 443 } else { 8080 });
+    let remark = url
+        .fragment()
+        .map(percent_decode)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("{}:{}", server, port));
+    let params = query_map(&url);
+
+    let mut node = NodeIR::new(next_node_id("http"), Protocol::Http, remark, &server, port, group);
+    apply_basic_auth(&mut node, url.username(), url.password());
+    node.tls = build_tls(&params, &server, is_https);
+    node.raw_uri = Some(uri.to_string());
+    Ok(node)
+}
+
+fn parse_socks_proxy(uri: &str, group: &str) -> Result<NodeIR> {
+    let lower = uri.to_ascii_lowercase();
+    let (scheme_len, default_ver) = if lower.starts_with("socks5h://") {
+        (10, "5")
+    } else if lower.starts_with("socks5://") {
+        (9, "5")
+    } else if lower.starts_with("socks4a://") {
+        (10, "4a")
+    } else if lower.starts_with("socks4://") {
+        (9, "4")
+    } else {
+        (8, "5")
+    };
+
+    let rest = &uri[scheme_len..];
+    let (body, frag) = match rest.split_once('#') {
+        Some((b, f)) => (b, Some(percent_decode(f))),
+        None => (rest, None),
+    };
+
+    let normalized = if !body.contains(':') && !body.contains('@') {
+        if let Some(decoded) = try_decode_base64_text(body) {
+            format!("socks5://{}", decoded.trim())
+        } else {
+            format!("socks5://{}", body)
+        }
+    } else {
+        format!("socks5://{}", body)
+    };
+
+    let url = Url::parse(&normalized).context("Invalid SOCKS proxy URI")?;
+    let server = url
+        .host_str()
+        .ok_or_else(|| anyhow!("SOCKS proxy missing host"))?
+        .to_string();
+    let port = url.port().unwrap_or(1080);
+    let remark = frag
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("{}:{}", server, port));
+
+    let mut node = NodeIR::new(next_node_id("socks"), Protocol::Socks, remark, server, port, group);
+    node.socks_version = Some(default_ver.to_string());
+    apply_basic_auth(&mut node, url.username(), url.password());
+    node.raw_uri = Some(uri.to_string());
+    Ok(node)
+}
+
+fn apply_basic_auth(node: &mut NodeIR, raw_user: &str, raw_pass: Option<&str>) {
+    let user = percent_decode(raw_user);
+    let pass = raw_pass.map(percent_decode);
+    if !user.is_empty() && pass.is_none() {
+        if let Some(decoded) = try_decode_base64_text(&user) {
+            if let Some((u, p)) = decoded.split_once(':') {
+                node.username = Some(u.to_string());
+                node.password = Some(p.to_string());
+                return;
+            }
+        }
+        node.username = Some(user);
+    } else {
+        if !user.is_empty() {
+            node.username = Some(user);
+        }
+        node.password = pass.filter(|s| !s.is_empty());
+    }
 }

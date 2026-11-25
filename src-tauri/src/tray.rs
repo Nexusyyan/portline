@@ -4,7 +4,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Manager};
 
 pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
-    let show_item = MenuItem::with_id(app, "show", "Show Portline", true, None::<&str>)?;
+    let show_item = MenuItem::with_id(app, "toggle", "Show / Hide Portline", true, None::<&str>)?;
     let restore_item = MenuItem::with_id(
         app,
         "restore_net",
@@ -20,13 +20,7 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         .tooltip("Portline")
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => {
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.show();
-                    let _ = win.unminimize();
-                    let _ = win.set_focus();
-                }
-            }
+            "toggle" => toggle_main_window(app),
             "restore_net" => {
                 if let Some(state) = app.try_state::<AppState>() {
                     if let Ok(guard) = state.netguard.lock() {
@@ -50,12 +44,7 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 ..
             } = event
             {
-                let app = tray.app_handle();
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.show();
-                    let _ = win.unminimize();
-                    let _ = win.set_focus();
-                }
+                toggle_main_window(tray.app_handle());
             }
         });
 
@@ -65,4 +54,18 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 
     builder.build(app)?;
     Ok(())
+}
+
+fn toggle_main_window(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window("main") {
+        let visible = win.is_visible().unwrap_or(false);
+        let minimized = win.is_minimized().unwrap_or(false);
+        if visible && !minimized {
+            let _ = win.hide();
+        } else {
+            let _ = win.show();
+            let _ = win.unminimize();
+            let _ = win.set_focus();
+        }
+    }
 }

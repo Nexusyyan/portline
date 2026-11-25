@@ -6,7 +6,9 @@ export type Protocol =
   | "hysteria2"
   | "tuic"
   | "anytls"
-  | "wireguard";
+  | "wireguard"
+  | "http"
+  | "socks";
 
 export type RouteMode = "rule" | "global" | "direct";
 export type NavTab = "nodes" | "routing" | "monitor" | "core" | "settings";
@@ -40,7 +42,9 @@ export interface NodeIR {
   group: string;
   region: string;
   uuid?: string;
+  username?: string;
   password?: string;
+  socksVersion?: string;
   method?: string;
   flow?: string;
   alterId?: number;
@@ -108,6 +112,11 @@ export interface AppSettings {
   systemProxyEnabled: boolean;
   tunEnabled: boolean;
   autoStartCore: boolean;
+  minimizeToTray: boolean;
+  dnsLocalServer: string;
+  dnsRemoteServer: string;
+  dnsStrategy: string;
+  dnsFakeIp: boolean;
   latencyTestUrl: string;
   customJsonOverride?: string | null;
 }
