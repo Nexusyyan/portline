@@ -14,9 +14,9 @@ release-stage/
 src-tauri/gen/schemas/
 
 # Runtime binaries and user data (never commit sing-box binaries or portable data)
-core/
-runtime/
-portline-data/
+/core/
+/runtime/
+/portline-data/
 *.db
 *.db-shm
 *.db-wal
