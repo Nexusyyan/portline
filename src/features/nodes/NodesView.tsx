@@ -5,6 +5,7 @@ import {
   Download,
   FolderOpen,
   Gauge,
+  HelpCircle,
   Link2,
   Plus,
   RefreshCw,
@@ -13,8 +14,15 @@ import {
   Wifi,
   X,
 } from "lucide-react";
+import { NodeLabel } from "../../components/RegionFlag";
 import type { Dict } from "../../i18n";
-import type { CoreInfo, NodeIR, SimpleRoutingRule, SubscriptionGroup } from "../../types";
+import type {
+  CoreInfo,
+  LatencyProgressEvent,
+  NodeIR,
+  SimpleRoutingRule,
+  SubscriptionGroup,
+} from "../../types";
 import {
   delayColorVar,
   filterAndSortNodes,
@@ -32,6 +40,8 @@ interface NodesViewProps {
   rules: SimpleRoutingRule[];
   mainNodeId?: string | null;
   testingKind: "tcping" | "real" | null;
+  testProgress: LatencyProgressEvent | null;
+  testAvgMs?: number | null;
   downloadingCore: boolean;
   onDownloadCore: () => Promise<void>;
   onImportCoreBinary: () => Promise<void>;
@@ -44,6 +54,10 @@ interface NodesViewProps {
   onDeleteSubscription: (id: string) => Promise<void>;
 }
 
+function compactRuleTag(title: string): string {
+  return title.replace(/\s*\((?:Geosite|GeoIP)\)\s*$/i, "").trim();
+}
+
 export function NodesView({
   dict,
   coreInfo,
@@ -52,6 +66,8 @@ export function NodesView({
   rules,
   mainNodeId,
   testingKind,
+  testProgress,
+  testAvgMs,
   downloadingCore,
   onDownloadCore,
   onImportCoreBinary,
@@ -75,6 +91,12 @@ export function NodesView({
   const [importing, setImporting] = useState(false);
   const [showSubs, setShowSubs] = useState(false);
   const [refreshingSubId, setRefreshingSubId] = useState<string | null>(null);
+  const [hoveredTags, setHoveredTags] = useState<{
+    tags: string[];
+    x: number;
+    y: number;
+    placeBelow: boolean;
+  } | null>(null);
 
   const groups = useMemo(() => {
     const names = Array.from(new Set(nodes.map((n) => n.group)));
@@ -156,6 +178,24 @@ export function NodesView({
       setImporting(false);
     }
   };
+
+  const progressTotal = testProgress?.total ?? visibleNodes.length;
+  const progressDone = testProgress?.completed ?? 0;
+  const progressPct =
+    progressTotal > 0 ? Math.min(100, Math.round((progressDone / progressTotal) * 100)) : 0;
+  const isStartingPhase = testingKind === "real" && testProgress?.phase === "starting";
+  const modeTag =
+    testingKind === "tcping"
+      ? dict.nodes.testingTcpingTag
+      : testProgress?.stripHandshake === false
+        ? dict.nodes.testingColdTag
+        : dict.nodes.testingUnifiedTag;
+  const latestNode = useMemo(() => {
+    const id = testProgress?.latest?.nodeId;
+    if (!id) return null;
+    return nodes.find((n) => n.id === id) ?? null;
+  }, [testProgress?.latest?.nodeId, nodes]);
+  const latestDelayMs = testProgress?.latest?.delayMs ?? null;
 
   return (
     <section className="flex min-h-0 flex-1 flex-col">
@@ -256,7 +296,7 @@ export function NodesView({
         </div>
       </div>
 
-      {/* Offline-First Core Setup Banner when official sing-box is not yet present */}
+      {/* Offline-First Core Setup Banner */}
       {!coreInfo.installed && (
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-[var(--border-hairline)] bg-[var(--bg-subtle)] px-5 py-2 text-[12px]">
           <span className="text-[var(--text-secondary)]">
@@ -286,19 +326,97 @@ export function NodesView({
         </div>
       )}
 
-      {/* Non-blocking Test Progress Strip */}
+      {/* Precision Telemetry Progress HUD during Batch Latency Testing */}
       {testingKind && (
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--border-hairline)] bg-[var(--bg-subtle)] px-5 py-2 text-[12px]">
-          <span className="flex items-center gap-2 text-[var(--text-primary)]">
-            <span
-              className="h-2 w-2 animate-pulse rounded-full"
-              style={{ backgroundColor: "var(--warning-dot)" }}
-            />
-            {dict.nodes.testingProgress}
-          </span>
-          <span className="font-mono text-[11px] text-[var(--text-secondary)] uppercase">
-            {testingKind}
-          </span>
+        <div className="telemetry-panel shrink-0 space-y-2 border-b border-[var(--border-hairline)] px-5 py-3 text-[12px]">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <span
+                className="h-2 w-2 shrink-0 rounded-full animate-pulse"
+                style={{
+                  backgroundColor: "var(--success-dot)",
+                  boxShadow: "0 0 8px var(--success-dot)",
+                }}
+              />
+              <span className="font-medium text-[var(--text-primary)]">
+                {isStartingPhase
+                  ? dict.nodes.testingStarting
+                  : testingKind === "real"
+                    ? dict.nodes.testingReal
+                    : dict.nodes.testingTcping}
+              </span>
+              <span className="rounded-[5px] border border-[var(--border-strong)] bg-[var(--bg-surface)] px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-wider text-[var(--text-primary)]">
+                {modeTag}
+              </span>
+            </div>
+            <div className="flex items-center gap-3 font-mono text-[11px] num-tabular">
+              <span style={{ color: "var(--success-text)" }}>
+                {dict.nodes.testingPassed} {testProgress?.passed ?? 0}
+              </span>
+              <span className="text-[var(--text-tertiary)]">
+                {dict.nodes.testingFailed} {testProgress?.failed ?? 0}
+              </span>
+              {testAvgMs != null && (
+                <span className="text-[var(--text-secondary)]">
+                  {dict.nodes.testingAvg} {testAvgMs} ms
+                </span>
+              )}
+              <span className="font-semibold text-[var(--text-primary)]">
+                {isStartingPhase ? "--%" : `${progressPct}%`}
+              </span>
+            </div>
+          </div>
+
+          <div className="telemetry-track">
+            {isStartingPhase ? (
+              <div className="telemetry-radar" />
+            ) : (
+              <div
+                className="telemetry-fill"
+                style={{ width: `${Math.max(3, progressPct)}%` }}
+              >
+                {progressPct > 0 && progressPct < 100 && <span className="telemetry-tip" />}
+              </div>
+            )}
+            <div className="telemetry-ticks" />
+          </div>
+
+          <div className="flex items-center justify-between gap-3 font-mono text-[11px] num-tabular">
+            <div className="flex min-w-0 items-center gap-2 text-[var(--text-secondary)]">
+              {latestNode ? (
+                <>
+                  <NodeLabel
+                    remark={latestNode.remark}
+                    region={latestNode.region}
+                    size="xs"
+                    className="text-[var(--text-primary)]"
+                  />
+                  <span
+                    className="shrink-0 font-medium"
+                    style={{
+                      color:
+                        latestDelayMs != null
+                          ? delayColorVar(latestDelayMs, testingKind)
+                          : "var(--danger-text)",
+                    }}
+                  >
+                    {latestDelayMs != null
+                      ? `${latestDelayMs} ms`
+                      : dict.nodes.testingTimeout}
+                  </span>
+                </>
+              ) : (
+                <span className="text-[var(--text-tertiary)]">
+                  {isStartingPhase
+                    ? "ISOLATED PROBE ENGINE"
+                    : `${progressDone} / ${progressTotal}`}
+                </span>
+              )}
+            </div>
+            <span className="shrink-0 text-[var(--text-secondary)]">
+              {progressDone} / {progressTotal}
+            </span>
+          </div>
         </div>
       )}
 
@@ -315,7 +433,7 @@ export function NodesView({
         </button>
       </div>
 
-      {/* Table Header */}
+      {/* Table Header & Virtualized Body */}
       {visibleNodes.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
           <div className="text-[14px] font-medium text-[var(--text-primary)]">
@@ -352,12 +470,23 @@ export function NodesView({
             <div className="col-span-2 hidden md:block">{dict.nodes.colServer}</div>
             <div className="col-span-1 hidden sm:block">{dict.nodes.colGroup}</div>
             <div className="col-span-1 text-right">{dict.nodes.colTcping}</div>
-            <div className="col-span-1 text-right">{dict.nodes.colReal}</div>
+            <div
+              className="col-span-1 flex items-center justify-end gap-1"
+              title={dict.nodes.realDelayTooltip}
+            >
+              <span>{dict.nodes.colReal}</span>
+              <HelpCircle className="h-3 w-3 text-[var(--text-tertiary)]" strokeWidth={1.5} />
+            </div>
             <div className="col-span-2 text-right">{dict.nodes.colAction}</div>
           </div>
 
-          {/* Virtualized Rows */}
-          <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
+          <div
+            ref={scrollRef}
+            onScroll={() => {
+              if (hoveredTags) setHoveredTags(null);
+            }}
+            className="min-h-0 flex-1 overflow-auto"
+          >
             <div
               style={{
                 height: `${virtualizer.getTotalSize()}px`,
@@ -401,18 +530,38 @@ export function NodesView({
                       </span>
                     </div>
 
-                    <div className="col-span-4 flex min-w-0 items-center gap-1.5 pr-2">
-                      <span className="truncate font-medium text-[var(--text-primary)]">
-                        {n.remark}
-                      </span>
-                      {tags.map((tag) => (
-                        <span
-                          key={tag}
-                          className="shrink-0 rounded-[5px] border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-1.5 py-0.5 text-[10.5px] text-[var(--text-secondary)]"
+                    <div className="col-span-4 flex min-w-0 items-center gap-1.5 overflow-hidden pr-2">
+                      <NodeLabel
+                        remark={n.remark}
+                        region={n.region}
+                        size="md"
+                        className="min-w-0 flex-1 font-medium text-[var(--text-primary)]"
+                      />
+                      {tags.length > 0 && (
+                        <div
+                          className="flex shrink-0 items-center gap-1"
+                          onMouseEnter={(e) => {
+                            const r = e.currentTarget.getBoundingClientRect();
+                            const placeBelow = r.top < 150;
+                            setHoveredTags({
+                              tags,
+                              x: Math.max(140, Math.min(r.left + r.width / 2, window.innerWidth - 140)),
+                              y: placeBelow ? r.bottom + 6 : r.top - 6,
+                              placeBelow,
+                            });
+                          }}
+                          onMouseLeave={() => setHoveredTags(null)}
                         >
-                          {tag}
-                        </span>
-                      ))}
+                          <span className="max-w-[84px] truncate rounded-[5px] border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-1.5 py-0.5 text-[10.5px] text-[var(--text-secondary)]">
+                            {compactRuleTag(tags[0])}
+                          </span>
+                          {tags.length > 1 && (
+                            <span className="rounded-[5px] border border-[var(--border-strong)] bg-[var(--bg-subtle)] px-1.5 py-0.5 font-mono text-[10.5px] font-medium text-[var(--text-primary)] num-tabular">
+                              +{tags.length - 1}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     <div className="col-span-2 hidden truncate pr-2 font-mono text-[11.5px] text-[var(--text-secondary)] md:block">
@@ -425,14 +574,14 @@ export function NodesView({
 
                     <div
                       className="col-span-1 text-right font-mono text-[11.5px] num-tabular"
-                      style={{ color: delayColorVar(n.tcpingMs) }}
+                      style={{ color: delayColorVar(n.tcpingMs, "tcping") }}
                     >
                       {n.tcpingMs != null ? `${n.tcpingMs} ms` : "--"}
                     </div>
 
                     <div
                       className="col-span-1 text-right font-mono text-[11.5px] font-medium num-tabular"
-                      style={{ color: delayColorVar(n.realDelayMs) }}
+                      style={{ color: delayColorVar(n.realDelayMs, "real") }}
                     >
                       {n.realDelayMs != null ? `${n.realDelayMs} ms` : "--"}
                     </div>
@@ -470,6 +619,37 @@ export function NodesView({
             </div>
           </div>
         </>
+      )}
+
+      {/* Floating Hover Popover for Overflowing Rule Tags */}
+      {hoveredTags && (
+        <div
+          className="ui-popover pointer-events-none fixed z-50 w-max max-w-[260px] p-2.5"
+          style={{
+            left: `${hoveredTags.x}px`,
+            top: `${hoveredTags.y}px`,
+            transform: hoveredTags.placeBelow
+              ? "translate(-50%, 0)"
+              : "translate(-50%, -100%)",
+          }}
+        >
+          <div className="mb-1.5 flex items-center justify-between gap-3 border-b border-[var(--border-hairline)] pb-1 text-[10.5px] font-medium text-[var(--text-secondary)]">
+            <span>{dict.nodes.assignedRulesTitle}</span>
+            <span className="font-mono num-tabular text-[var(--text-tertiary)]">
+              {hoveredTags.tags.length}
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {hoveredTags.tags.map((tag) => (
+              <span
+                key={tag}
+                className="rounded-[5px] border border-[var(--border-hairline)] bg-[var(--bg-subtle)] px-1.5 py-0.5 text-[11px] text-[var(--text-primary)]"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* Import Modal */}

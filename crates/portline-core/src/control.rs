@@ -112,7 +112,13 @@ impl ControlClient {
             .send()
             .await?;
         if !resp.status().is_success() {
-            return Err(anyhow!("Delay probe failed with status {}", resp.status()));
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow!(
+                "Delay probe failed with status {}: {}",
+                status,
+                body.trim()
+            ));
         }
         let val: Value = resp.json().await?;
         val["delay"]

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, Search } from "lucide-react";
 
@@ -6,6 +6,7 @@ export interface SelectOption {
   value: string;
   label: string;
   meta?: string;
+  icon?: ReactNode;
 }
 
 export interface SelectGroup {
@@ -157,8 +158,11 @@ export function CustomSelect({
         } ${disabled ? "opacity-45 cursor-not-allowed" : ""} ${className}`}
       >
         <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
-          <span className="truncate text-[var(--text-primary)]">
-            {selectedOption ? selectedOption.label : placeholder}
+          <span className="flex min-w-0 items-center gap-1.5 truncate text-[var(--text-primary)]">
+            {selectedOption?.icon}
+            <span className="truncate">
+              {selectedOption ? selectedOption.label : placeholder}
+            </span>
           </span>
           {selectedOption?.meta && (
             <span className="shrink-0 font-mono text-[11px] num-tabular text-[var(--text-tertiary)]">
@@ -251,7 +255,10 @@ export function CustomSelect({
                                 : "text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
                             }`}
                           >
-                            <span className="truncate">{opt.label}</span>
+                            <span className="flex min-w-0 items-center gap-1.5 truncate">
+                              {opt.icon}
+                              <span className="truncate">{opt.label}</span>
+                            </span>
                             <span className="flex shrink-0 items-center gap-1.5">
                               {opt.meta && (
                                 <span className="font-mono text-[11px] num-tabular text-[var(--text-secondary)]">

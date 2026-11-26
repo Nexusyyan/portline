@@ -198,32 +198,33 @@ fn has_code_token(text: &str, code: &str) -> bool {
         .any(|tok| tok.eq_ignore_ascii_case(code))
 }
 
-pub fn infer_region(remark: &str, server: &str) -> String {
-    let upper = format!("{} {}", remark.to_ascii_uppercase(), server.to_ascii_uppercase());
-
-    // 1. Regional indicator flag emojis (pure 7-bit ASCII Unicode escapes).
-    let flags: &[(&str, &str)] = &[
-        ("\u{1f1e6}\u{1f1fa}", "AU"),
-        ("\u{1f1fa}\u{1f1f8}", "US"),
-        ("\u{1f1ef}\u{1f1f5}", "JP"),
-        ("\u{1f1ed}\u{1f1f0}", "HK"),
-        ("\u{1f1f8}\u{1f1ec}", "SG"),
-        ("\u{1f1f9}\u{1f1fc}", "TW"),
-        ("\u{1f1e9}\u{1f1ea}", "DE"),
-        ("\u{1f1ec}\u{1f1e7}", "UK"),
-        ("\u{1f1f0}\u{1f1f7}", "KR"),
-        ("\u{1f1e8}\u{1f1e6}", "CA"),
-        ("\u{1f1f3}\u{1f1f1}", "NL"),
-        ("\u{1f1eb}\u{1f1f7}", "FR"),
-        ("\u{1f1ee}\u{1f1f3}", "IN"),
-        ("\u{1f1f7}\u{1f1fa}", "RU"),
-        ("\u{1f1f9}\u{1f1f7}", "TR"),
-    ];
-    for (flag, code) in flags {
-        if remark.contains(flag) {
-            return (*code).to_string();
+fn extract_flag_region_code(text: &str) -> Option<String> {
+    let mut prev_ri: Option<u32> = None;
+    for ch in text.chars() {
+        let cp = ch as u32;
+        if (0x1F1E6..=0x1F1FF).contains(&cp) {
+            if let Some(first) = prev_ri {
+                let c1 = (b'A' + (first - 0x1F1E6) as u8) as char;
+                let c2 = (b'A' + (cp - 0x1F1E6) as u8) as char;
+                let code = format!("{}{}", c1, c2);
+                return Some(if code == "GB" { "UK".to_string() } else { code });
+            } else {
+                prev_ri = Some(cp);
+            }
+        } else {
+            prev_ri = None;
         }
     }
+    None
+}
+
+pub fn infer_region(remark: &str, server: &str) -> String {
+    // 1. Any Unicode Regional Indicator flag pair (e.g. US, JP, HK, SG, AU, GB->UK, CH, SE, ...).
+    if let Some(code) = extract_flag_region_code(remark) {
+        return code;
+    }
+
+    let upper = format!("{} {}", remark.to_ascii_uppercase(), server.to_ascii_uppercase());
 
     // 2. Explicit country/city tokens and localized names.
     if has_code_token(&upper, "AU")
@@ -245,6 +246,8 @@ pub fn infer_region(remark: &str, server: &str) -> String {
         || upper.contains("SEATTLE")
         || upper.contains("NEW YORK")
         || upper.contains("SILICON VALLEY")
+        || upper.contains("DALLAS")
+        || upper.contains("CHICAGO")
         || remark.contains("\u{7f8e}\u{56fd}")
         || remark.contains("\u{6d1b}\u{6749}\u{77f6}")
         || remark.contains("\u{5723}\u{4f55}\u{585e}")
@@ -339,6 +342,110 @@ pub fn infer_region(remark: &str, server: &str) -> String {
     {
         return "IN".to_string();
     }
+    if has_code_token(&upper, "RU")
+        || upper.contains("RUSSIA")
+        || upper.contains("MOSCOW")
+        || remark.contains("\u{4fc4}\u{7f57}\u{65af}")
+    {
+        return "RU".to_string();
+    }
+    if has_code_token(&upper, "TR")
+        || upper.contains("TURKEY")
+        || upper.contains("ISTANBUL")
+        || remark.contains("\u{571f}\u{8033}\u{5176}")
+    {
+        return "TR".to_string();
+    }
+    if has_code_token(&upper, "CH")
+        || upper.contains("SWITZERLAND")
+        || upper.contains("ZURICH")
+        || remark.contains("\u{745e}\u{58eb}")
+    {
+        return "CH".to_string();
+    }
+    if has_code_token(&upper, "SE")
+        || upper.contains("SWEDEN")
+        || upper.contains("STOCKHOLM")
+        || remark.contains("\u{745e}\u{5178}")
+    {
+        return "SE".to_string();
+    }
+    if has_code_token(&upper, "IT")
+        || upper.contains("ITALY")
+        || upper.contains("MILAN")
+        || remark.contains("\u{610f}\u{5927}\u{5229}")
+    {
+        return "IT".to_string();
+    }
+    if has_code_token(&upper, "ES")
+        || upper.contains("SPAIN")
+        || upper.contains("MADRID")
+        || remark.contains("\u{897f}\u{73ed}\u{7259}")
+    {
+        return "ES".to_string();
+    }
+    if has_code_token(&upper, "PL")
+        || upper.contains("POLAND")
+        || upper.contains("WARSAW")
+        || remark.contains("\u{6ce2}\u{5170}")
+    {
+        return "PL".to_string();
+    }
+    if has_code_token(&upper, "MY")
+        || upper.contains("MALAYSIA")
+        || remark.contains("\u{9a6c}\u{6765}\u{897f}\u{4e9a}")
+    {
+        return "MY".to_string();
+    }
+    if has_code_token(&upper, "TH")
+        || upper.contains("THAILAND")
+        || remark.contains("\u{6cf0}\u{56fd}")
+    {
+        return "TH".to_string();
+    }
+    if has_code_token(&upper, "VN")
+        || upper.contains("VIETNAM")
+        || remark.contains("\u{8d8a}\u{5357}")
+    {
+        return "VN".to_string();
+    }
+    if has_code_token(&upper, "PH")
+        || upper.contains("PHILIPPINES")
+        || remark.contains("\u{83f2}\u{5f8b}\u{5bbe}")
+    {
+        return "PH".to_string();
+    }
+    if has_code_token(&upper, "BR")
+        || upper.contains("BRAZIL")
+        || remark.contains("\u{5df4}\u{897f}")
+    {
+        return "BR".to_string();
+    }
+    if has_code_token(&upper, "AE")
+        || upper.contains("DUBAI")
+        || remark.contains("\u{963f}\u{8054}\u{914b}")
+        || remark.contains("\u{8fea}\u{62dc}")
+    {
+        return "AE".to_string();
+    }
+    if has_code_token(&upper, "AR")
+        || upper.contains("ARGENTINA")
+        || remark.contains("\u{963f}\u{6839}\u{5ef7}")
+    {
+        return "AR".to_string();
+    }
+    if has_code_token(&upper, "NZ")
+        || upper.contains("NEW ZEALAND")
+        || remark.contains("\u{65b0}\u{897f}\u{5170}")
+    {
+        return "NZ".to_string();
+    }
+    if has_code_token(&upper, "MO")
+        || upper.contains("MACAU")
+        || remark.contains("\u{6fb3}\u{95e8}")
+    {
+        return "MO".to_string();
+    }
     "OTHER".to_string()
 }
 
@@ -376,12 +483,36 @@ pub struct SimpleRoutingRule {
     pub description: String,
     pub patterns: Vec<String>,
     #[serde(default)]
+    pub domain_keywords: Vec<String>,
+    #[serde(default)]
+    pub ip_cidrs: Vec<String>,
+    #[serde(default)]
     pub process_names: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rule_set: Option<String>,
     pub target: String,
     pub enabled: bool,
     pub priority: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DnsRuleItem {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub domains: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_set: Option<String>,
+    pub server: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DnsHostEntry {
+    pub domain: String,
+    pub ips: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -414,8 +545,60 @@ fn default_dns_remote() -> String {
     "https://1.1.1.1/dns-query".to_string()
 }
 
+fn default_dns_bootstrap() -> String {
+    "223.5.5.5".to_string()
+}
+
+fn default_dns_remote_detour() -> String {
+    "main".to_string()
+}
+
 fn default_dns_strategy() -> String {
     "prefer_ipv4".to_string()
+}
+
+fn default_fake_ip_inet4() -> String {
+    "198.18.0.0/15".to_string()
+}
+
+fn default_fake_ip_inet6() -> String {
+    "fc00::/18".to_string()
+}
+
+fn default_dns_cache_capacity() -> u32 {
+    4096
+}
+
+fn default_log_level() -> String {
+    "info".to_string()
+}
+
+fn default_sniff_timeout() -> String {
+    "300ms".to_string()
+}
+
+fn default_tun_iface() -> String {
+    "portline-tun0".to_string()
+}
+
+fn default_tun_stack() -> String {
+    "mixed".to_string()
+}
+
+fn default_tun_mtu() -> u16 {
+    9000
+}
+
+fn default_tun_inet4() -> String {
+    "172.19.0.1/30".to_string()
+}
+
+fn default_urltest_interval() -> String {
+    "3m".to_string()
+}
+
+fn default_urltest_tolerance() -> u16 {
+    50
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -432,16 +615,72 @@ pub struct AppSettings {
     pub system_proxy_enabled: bool,
     pub tun_enabled: bool,
     pub auto_start_core: bool,
+    #[serde(default)]
+    pub launch_at_login: bool,
     #[serde(default = "default_true")]
     pub minimize_to_tray: bool,
     #[serde(default = "default_dns_local")]
     pub dns_local_server: String,
     #[serde(default = "default_dns_remote")]
     pub dns_remote_server: String,
+    #[serde(default = "default_dns_bootstrap")]
+    pub dns_bootstrap_server: String,
+    #[serde(default = "default_dns_remote_detour")]
+    pub dns_remote_detour: String,
     #[serde(default = "default_dns_strategy")]
     pub dns_strategy: String,
     #[serde(default)]
     pub dns_fake_ip: bool,
+    #[serde(default = "default_fake_ip_inet4")]
+    pub dns_fake_ip_inet4: String,
+    #[serde(default = "default_fake_ip_inet6")]
+    pub dns_fake_ip_inet6: String,
+    #[serde(default)]
+    pub dns_disable_cache: bool,
+    #[serde(default)]
+    pub dns_disable_expire: bool,
+    #[serde(default)]
+    pub dns_reverse_mapping: bool,
+    #[serde(default = "default_dns_cache_capacity")]
+    pub dns_cache_capacity: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dns_client_subnet: Option<String>,
+    #[serde(default)]
+    pub dns_custom_rules: Vec<DnsRuleItem>,
+    #[serde(default)]
+    pub dns_hosts: Vec<DnsHostEntry>,
+    #[serde(default = "default_log_level")]
+    pub log_level: String,
+    #[serde(default = "default_true")]
+    pub sniff_enabled: bool,
+    #[serde(default = "default_sniff_timeout")]
+    pub sniff_timeout: String,
+    #[serde(default = "default_true")]
+    pub find_process: bool,
+    #[serde(default = "default_true")]
+    pub auto_detect_interface: bool,
+    #[serde(default = "default_tun_iface")]
+    pub tun_interface_name: String,
+    #[serde(default = "default_tun_stack")]
+    pub tun_stack: String,
+    #[serde(default = "default_tun_mtu")]
+    pub tun_mtu: u16,
+    #[serde(default = "default_tun_inet4")]
+    pub tun_inet4_address: String,
+    #[serde(default = "default_true")]
+    pub tun_auto_route: bool,
+    #[serde(default = "default_true")]
+    pub tun_strict_route: bool,
+    #[serde(default = "default_urltest_interval")]
+    pub urltest_interval: String,
+    #[serde(default = "default_urltest_tolerance")]
+    pub urltest_tolerance: u16,
+    #[serde(default = "default_true")]
+    pub cache_file_enabled: bool,
+    #[serde(default = "default_true")]
+    pub cache_store_fakeip: bool,
+    #[serde(default = "default_true")]
+    pub latency_strip_handshake: bool,
     pub latency_test_url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_json_override: Option<String>,
@@ -460,11 +699,39 @@ impl Default for AppSettings {
             system_proxy_enabled: false,
             tun_enabled: false,
             auto_start_core: true,
+            launch_at_login: false,
             minimize_to_tray: true,
             dns_local_server: default_dns_local(),
             dns_remote_server: default_dns_remote(),
+            dns_bootstrap_server: default_dns_bootstrap(),
+            dns_remote_detour: default_dns_remote_detour(),
             dns_strategy: default_dns_strategy(),
             dns_fake_ip: false,
+            dns_fake_ip_inet4: default_fake_ip_inet4(),
+            dns_fake_ip_inet6: default_fake_ip_inet6(),
+            dns_disable_cache: false,
+            dns_disable_expire: false,
+            dns_reverse_mapping: false,
+            dns_cache_capacity: default_dns_cache_capacity(),
+            dns_client_subnet: None,
+            dns_custom_rules: Vec::new(),
+            dns_hosts: Vec::new(),
+            log_level: default_log_level(),
+            sniff_enabled: true,
+            sniff_timeout: default_sniff_timeout(),
+            find_process: true,
+            auto_detect_interface: true,
+            tun_interface_name: default_tun_iface(),
+            tun_stack: default_tun_stack(),
+            tun_mtu: default_tun_mtu(),
+            tun_inet4_address: default_tun_inet4(),
+            tun_auto_route: true,
+            tun_strict_route: true,
+            urltest_interval: default_urltest_interval(),
+            urltest_tolerance: default_urltest_tolerance(),
+            cache_file_enabled: true,
+            cache_store_fakeip: true,
+            latency_strip_handshake: true,
             latency_test_url: "https://www.gstatic.com/generate_204".to_string(),
             custom_json_override: None,
         }
@@ -557,4 +824,89 @@ pub struct CompileOutput {
     pub reachable_node_ids: Vec<String>,
     pub synthesized_groups: Vec<String>,
     pub control_secret: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LatencyProgressEvent {
+    pub kind: String,
+    pub phase: String,
+    pub completed: usize,
+    pub total: usize,
+    pub passed: usize,
+    pub failed: usize,
+    #[serde(default)]
+    pub strip_handshake: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest: Option<LatencyResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionHistoryRecord {
+    pub id: String,
+    pub process: String,
+    pub destination: String,
+    pub host: String,
+    pub platform: String,
+    pub inbound: String,
+    pub rule: String,
+    pub chain: Vec<String>,
+    pub upload_bytes: u64,
+    pub download_bytes: u64,
+    pub started_at: String,
+    pub closed_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformTrafficStat {
+    pub platform: String,
+    pub upload_bytes: u64,
+    pub download_bytes: u64,
+    pub total_bytes: u64,
+    pub connection_count: u64,
+    pub active_count: u64,
+    pub top_domains: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RouteTestResult {
+    pub input: String,
+    pub normalized_host: String,
+    pub is_ip: bool,
+    pub is_private_ip: bool,
+    pub route_mode: RouteMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matched_rule_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matched_rule_title: Option<String>,
+    pub matched_by: String,
+    pub target: String,
+    pub resolved_exit_kind: String,
+    pub resolved_exit_label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_node_region: Option<String>,
+    pub dns_server: String,
+    pub dns_reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RulePresetSpec {
+    pub id: String,
+    pub category: String,
+    pub title: String,
+    pub title_en: String,
+    pub description: String,
+    pub patterns: Vec<String>,
+    #[serde(default)]
+    pub process_names: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_set: Option<String>,
+    pub default_target: String,
+    pub default_priority: i32,
 }

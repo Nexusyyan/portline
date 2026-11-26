@@ -151,6 +151,8 @@ fn test_tree_shaking_2000_nodes_and_dynamic_matcher() {
             title_en: "AI".to_string(),
             description: "OpenAI".to_string(),
             patterns: vec!["openai.com".to_string()],
+            domain_keywords: Vec::new(),
+            ip_cidrs: Vec::new(),
             process_names: Vec::new(),
             rule_set: None,
             target: "auto:US".to_string(),
@@ -163,6 +165,8 @@ fn test_tree_shaking_2000_nodes_and_dynamic_matcher() {
             title_en: "Pinned".to_string(),
             description: "GitHub".to_string(),
             patterns: vec!["github.com".to_string()],
+            domain_keywords: Vec::new(),
+            ip_cidrs: Vec::new(),
             process_names: Vec::new(),
             rule_set: None,
             target: "n-bulk-0999".to_string(),
@@ -274,7 +278,34 @@ fn test_portable_mode_and_sqlite_store() {
     assert!(paths.root_dir.ends_with("portline-data"));
 
     let mut store = Store::open(&paths.db_path).expect("open store");
-    assert_eq!(store.list_rules().expect("rules").len(), 5);
+    assert_eq!(store.list_rules().expect("rules").len(), 4);
+
+    // Switching strategies preserves user custom rules and applies classic site/ip sets.
+    let custom_rule = SimpleRoutingRule {
+        id: "r-custom-work".to_string(),
+        title: "Work".to_string(),
+        title_en: "Work".to_string(),
+        description: "corp.internal".to_string(),
+        patterns: vec!["corp.internal".to_string()],
+        domain_keywords: Vec::new(),
+        ip_cidrs: Vec::new(),
+        process_names: Vec::new(),
+        rule_set: None,
+        target: "direct".to_string(),
+        enabled: true,
+        priority: 5,
+    };
+    store.upsert_rule(&custom_rule).expect("upsert custom");
+    let gfw_rules = store
+        .apply_routing_strategy("gfw-list")
+        .expect("apply gfw-list");
+    assert!(gfw_rules.iter().any(|r| r.id == "r-custom-work"));
+    assert!(gfw_rules
+        .iter()
+        .any(|r| r.rule_set.as_deref() == Some("geosite-gfw")));
+    assert!(gfw_rules
+        .iter()
+        .any(|r| r.rule_set.as_deref() == Some("geoip-cn")));
 
     let nodes = build_all_8_protocol_nodes();
     store.upsert_nodes(&nodes).expect("upsert");
@@ -569,4 +600,267 @@ fn test_singbox_log_level_and_inbound_label_parsing() {
     assert_eq!(normalize_inbound_label("mixed/in-20808"), ":20808");
     assert_eq!(normalize_inbound_label("in-10809"), ":10809");
     assert_eq!(normalize_inbound_label("tun/tun-in"), "TUN");
+}
+
+#[test]
+fn test_route_eval_history_platform_and_extended_dns_v114_check() {
+    use portline_core::model::{ConnectionHistoryRecord, DnsHostEntry, DnsRuleItem};
+    use portline_core::route_eval::{evaluate_route_target, normalize_test_target};
+    use portline_core::storage::{classify_platform, extract_host, rule_preset_catalog};
+
+    assert_eq!(normalize_test_target("https://api.openai.com:443/v1/chat"), "api.openai.com");
+    assert_eq!(normalize_test_target("192.168.1.10:8080"), "192.168.1.10");
+    assert_eq!(normalize_test_target("[2001:db8::1]:443"), "2001:db8::1");
+    assert_eq!(extract_host("rr1---sn.googlevideo.com:443"), "rr1---sn.googlevideo.com");
+    assert_eq!(classify_platform("rr1---sn.googlevideo.com", "chrome.exe"), "YouTube");
+    assert_eq!(classify_platform("api.openai.com", "node.exe"), "OpenAI / ChatGPT");
+    assert_eq!(classify_platform("sub.custom-site.co.uk", "chrome.exe"), "custom-site.co.uk");
+    assert!(rule_preset_catalog().len() >= 25);
+
+    let nodes = build_all_8_protocol_nodes();
+    let rules = default_simple_rules();
+    let settings = AppSettings {
+        main_node_id: Some("n-vless".to_string()),
+        dns_local_server: "https://dns.alidns.com/dns-query".to_string(),
+        dns_remote_server: "https://1.1.1.1/dns-query".to_string(),
+        dns_bootstrap_server: "223.5.5.5".to_string(),
+        dns_remote_detour: "main".to_string(),
+        dns_fake_ip: true,
+        dns_reverse_mapping: true,
+        dns_hosts: vec![DnsHostEntry {
+            domain: "nas.internal".to_string(),
+            ips: vec!["192.168.1.50".to_string()],
+        }],
+        dns_custom_rules: vec![DnsRuleItem {
+            id: "dr-1".to_string(),
+            title: "Block tracker".to_string(),
+            domains: vec!["tracker.example".to_string()],
+            rule_set: None,
+            server: "reject".to_string(),
+            enabled: true,
+        }],
+        tun_enabled: true,
+        tun_stack: "mixed".to_string(),
+        tun_mtu: 9000,
+        log_level: "debug".to_string(),
+        ..Default::default()
+    };
+
+    let res_cn = evaluate_route_target("https://www.baidu.com/s?wd=1", None, &settings, &rules, &nodes, None, None);
+    assert_eq!(res_cn.matched_rule_id.as_deref(), Some("classic-geosite-cn"));
+    assert_eq!(res_cn.target, "direct");
+
+    let res_overseas = evaluate_route_target("https://chatgpt.com/c/123", None, &settings, &rules, &nodes, None, None);
+    assert_eq!(res_overseas.matched_rule_id, None);
+    assert_eq!(res_overseas.target, "main");
+    assert_eq!(res_overseas.dns_server, "dns-fakeip");
+
+    let res_lan = evaluate_route_target("192.168.1.5:80", None, &settings, &rules, &nodes, None, None);
+    assert!(res_lan.is_private_ip);
+    assert_eq!(res_lan.target, "direct");
+
+    let res_host = evaluate_route_target("nas.internal", None, &settings, &rules, &nodes, None, None);
+    assert_eq!(res_host.dns_server, "dns-hosts");
+
+    // Verify SQLite connection history pagination and platform traffic aggregation.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut store = Store::open(&tmp.path().join("hist.db")).expect("open");
+    let recs = vec![
+        ConnectionHistoryRecord {
+            id: "c1".to_string(),
+            process: "chrome.exe".to_string(),
+            destination: "rr1.googlevideo.com:443".to_string(),
+            host: "rr1.googlevideo.com".to_string(),
+            platform: "YouTube".to_string(),
+            inbound: ":10808".to_string(),
+            rule: "final".to_string(),
+            chain: vec!["n-vless".to_string(), "main-exit".to_string()],
+            upload_bytes: 1000,
+            download_bytes: 500_000,
+            started_at: "2026-11-25T10:00:00Z".to_string(),
+            closed_at: "2026-11-25T10:01:00Z".to_string(),
+        },
+        ConnectionHistoryRecord {
+            id: "c2".to_string(),
+            process: "code.exe".to_string(),
+            destination: "api.github.com:443".to_string(),
+            host: "api.github.com".to_string(),
+            platform: "GitHub".to_string(),
+            inbound: ":10808".to_string(),
+            rule: "r-dev".to_string(),
+            chain: vec!["n-vless".to_string(), "main-exit".to_string()],
+            upload_bytes: 5000,
+            download_bytes: 20_000,
+            started_at: "2026-11-25T10:02:00Z".to_string(),
+            closed_at: "2026-11-25T10:03:00Z".to_string(),
+        },
+    ];
+    store.insert_connection_history(&recs).expect("insert history");
+    let (page_items, total) = store.query_connection_history("", 1, 10).expect("query");
+    assert_eq!(total, 2);
+    assert_eq!(page_items[0].id, "c2");
+
+    let stats = store.query_platform_traffic(None).expect("stats");
+    assert_eq!(stats.len(), 2);
+    assert_eq!(stats[0].platform, "YouTube");
+    assert_eq!(stats[0].total_bytes, 501_000);
+
+    // Verify compiled extended config passes strict sing-box v1.14 check with 0 warnings!
+    if let Some(sb) = find_test_singbox() {
+        let compiled = SingBox114Compiler::compile(&CompileInput {
+            nodes: &nodes,
+            rules: &rules,
+            extra_ports: &[],
+            settings: &settings,
+            control_secret: "strict-ext",
+            cache_db_path: None,
+            rule_cache: None,
+        })
+        .expect("compile extended");
+        let report = SingBox114Compiler::preflight_check(&sb, &compiled.config).expect("preflight");
+        assert!(report.ok, "extended v1.14 check failed: {}", report.stderr);
+        assert!(
+            report.deprecated_warnings.is_empty(),
+            "unexpected deprecation warnings: {:?}",
+            report.deprecated_warnings
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_unified_rtt_strips_first_handshake_overhead() {
+    use portline_core::tester::batch_real_delay_with_progress;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener as AsyncTcpListener;
+
+    let Some(sb) = find_test_singbox() else {
+        eprintln!("Skipping unified RTT test (set PORTLINE_TEST_SINGBOX)");
+        return;
+    };
+
+    // Mock HTTP CONNECT proxy that injects a 240ms handshake delay on CONNECT,
+    // then replies immediately to keep-alive HTTP HEAD requests inside the tunnel.
+    let listener = AsyncTcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let mock_port = listener.local_addr().unwrap().port();
+    let server_task = tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                break;
+            };
+            tokio::spawn(async move {
+                let mut buf = [0u8; 4096];
+                let Ok(n) = socket.read(&mut buf).await else {
+                    return;
+                };
+                if n == 0 {
+                    return;
+                }
+                let req = String::from_utf8_lossy(&buf[..n]);
+                if req.starts_with("CONNECT ") {
+                    tokio::time::sleep(Duration::from_millis(240)).await;
+                    if socket
+                        .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    // Serve multiple keep-alive HEAD requests over the established tunnel.
+                    while let Ok(rn) = socket.read(&mut buf).await {
+                        if rn == 0 {
+                            break;
+                        }
+                        if socket
+                            .write_all(
+                                b"HTTP/1.1 204 No Content\r\nConnection: keep-alive\r\n\r\n",
+                            )
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+    });
+
+    let node = NodeIR::new(
+        "n-mock-http",
+        Protocol::Http,
+        "Mock-HTTP-Node",
+        "127.0.0.1",
+        mock_port,
+        "Test",
+    );
+    let test_url = "http://probe.test/generate_204";
+
+    let cold = batch_real_delay_with_progress(
+        &sb,
+        std::slice::from_ref(&node),
+        test_url,
+        3000,
+        2,
+        None,
+        false,
+        |_| {},
+    )
+    .await
+    .expect("cold test");
+    let cold_ms = cold[0]
+        .delay_ms
+        .unwrap_or_else(|| panic!("cold delay should succeed, got: {:?}", cold[0]));
+
+    let unified = batch_real_delay_with_progress(
+        &sb,
+        std::slice::from_ref(&node),
+        test_url,
+        3000,
+        2,
+        None,
+        true,
+        |_| {},
+    )
+    .await
+    .expect("unified test");
+    let unified_ms = unified[0]
+        .delay_ms
+        .unwrap_or_else(|| panic!("unified delay should succeed, got: {:?}", unified[0]));
+
+    server_task.abort();
+
+    println!(
+        "Unified RTT verified: cold_ms={}ms (with 240ms handshake) vs unified_ms={}ms (warm keep-alive)",
+        cold_ms, unified_ms
+    );
+
+    assert!(
+        cold_ms >= 200,
+        "Expected cold delay >= 200ms (includes 240ms CONNECT handshake), got {}ms",
+        cold_ms
+    );
+    assert!(
+        unified_ms < 120,
+        "Expected unified strip-handshake RTT < 120ms (warm keep-alive), got {}ms (cold={}ms)",
+        unified_ms,
+        cold_ms
+    );
+}
+
+#[test]
+fn test_autostart_defaults_off_and_command_format() {
+    use portline_core::autostart::{launch_command_for_exe, AUTOSTART_ARG};
+
+    let defaults = AppSettings::default();
+    assert!(
+        !defaults.launch_at_login,
+        "launch_at_login must default to false"
+    );
+
+    let cmd =
+        launch_command_for_exe(std::path::Path::new(r"C:\Program Files\Portline\portline.exe"));
+    assert_eq!(
+        cmd,
+        format!("\"C:\\Program Files\\Portline\\portline.exe\" {}", AUTOSTART_ARG)
+    );
 }

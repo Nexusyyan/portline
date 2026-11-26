@@ -22,13 +22,13 @@
 
 ## 核心特性
 
-- **高密度虚拟滚动节点池**：支持导入 `VLESS (Reality/WS/gRPC/HTTPUpgrade)`、`VMess`、`Trojan`、`Shadowsocks`、`Hysteria2`、`TUIC`、`AnyTLS`、`WireGuard` 分享链接、Base64 订阅、`sing-box` JSON 与 Clash YAML；双击任意节点即可经本地控制 API **0ms 零断流热切换主出口**。
-- **零术语人话分流与可选多端口**：界面不暴露复杂策略组概念，直接以「当访问 X -> 走出口 Y」一行配完，内置域名去向即时模拟器、按地区自动优选最快节点（订阅刷新改名不断链），并可按需为 CLI / Docker 增开专属本地端口（如 `:10809`）。
-- **严格 `sing-box v1.14+` 编译器与按需 Tree-Shaking**：原生输出 0 弃用警告配置（顶层 `http_clients`、带 `evaluate` 与 `match_response: true` 的新版 DNS 规则、`WireGuard` `endpoints`、`action: sniff / hijack-dns / reject`）；即使本地存有 2,000+ 节点，仅将实际可达节点编译进运行态配置。
+- **高密度虚拟滚动节点池**：支持导入 `VLESS (Reality/WS/gRPC/HTTPUpgrade)`、`VMess`、`Trojan`、`Shadowsocks`、`Hysteria2`、`TUIC`、`AnyTLS`、`WireGuard`、`HTTP(S)`、`SOCKS5` 分享链接、Base64 订阅、`sing-box` JSON 与 Clash YAML；内置矢量 SVG 国旗（修复 Windows 字符国旗缺失）、精简 `+n` 悬浮规则徽标，双击即可经本地控制 API **0ms 零断流热切换主出口**。
+- **经典社区 Site/IP 分流策略、去向测试器与多端口入口**：内置 3 套一键切换社区策略（绕过大陆白名单 / GFW 代理列表 / 绕过大陆 + 平台分流）与 32 项官方 SagerNet `geosite-*` / `geoip-*` 二进制 `.srs` 预设库；提供域名/URL/IP/进程实时去向与 DNS 测试器、按地区自动优选最快节点，并可按需增开专属本地端口（如 `:10809`）。
+- **独立 DNS 解析页与可视化 `sing-box v1.14+` 配置**：可视化配置国内外上游 DNS（UDP/TCP/DoH/DoT/DoQ/H3）、远端 DNS 出口、Bootstrap、FakeIP 网段、静态 Hosts、自定义 DNS 规则、日志级别、协议嗅探、进程检测、TUN 参数与缓存文件，按需 Tree-Shaking 编译零弃用警告配置。
 - **配置预检与零断流回滚**：每次变更均先运行 `sing-box check -c` 校验；非法配置直接阻断并保留旧活跃进程，绝不踢断现有网络连接。
-- **隔离式无断流测速**：支持高并发 TCPing 与独立无 TUN 临时内核批量真连接测速（Windows Job Object 托管，测完即清、零孤儿进程、零影响主连接）。
-- **NetGuard 永不断网事务保护**：开启系统代理前持久化落盘系统原始代理与 DNS 快照；关闭、正常退出或异常崩溃后下次冷启动均可自动干净还原。
-- **单文件便携模式**：在 `portline.exe` 同目录放置 `portable.json`（`{"portable":true}`）即可将全部数据库、运行配置与日志收敛在 `./portline-data/` 中。
+- **Unified RTT 剥离握手测速与精密遥测 HUD**：支持高并发 TCPing 与独立无 TUN 隔离内核真连接测速（通过临时回环 SOCKS5 隧道预热保活连接并剥离 DNS/TCP/TLS 首次握手开销，默认开启，可在设置中切换），实时推送至高精度遥测进度条，Windows Job Object 托管零孤儿进程。
+- **可观测性、历史连接与分平台流量统计**：实时 60s 吞吐曲线、分页活跃连接与 500 行环形日志，自动持久化 SQLite 历史连接记录，按「今日 / 7 天 / 30 天 / 全部」统计各平台累计流量消耗。
+- **自定义托盘浮层、开机自启动与 NetGuard 防断网保护**：右键托盘弹出精致浮层快速切换模式/代理/TUN/启停内核；支持用户级静默开机自启动（默认关闭，无需管理员权限）；NetGuard 事务快照自动备份与崩溃恢复系统代理；放置 `portable.json` 即可开启便携模式。
 
 ## 下载安装
 

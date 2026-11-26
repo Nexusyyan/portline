@@ -219,10 +219,18 @@ export function formatSpeed(bps: number): string {
   return `${formatBytes(bps)}/s`;
 }
 
-export function delayColorVar(ms?: number | null): string {
+export function delayColorVar(
+  ms?: number | null,
+  kind: "tcping" | "real" = "tcping"
+): string {
   if (ms == null) return "var(--text-tertiary)";
-  if (ms <= 95) return "var(--success-text)";
-  if (ms <= 190) return "var(--warning-text)";
+  if (kind === "real") {
+    if (ms <= 160) return "var(--success-text)";
+    if (ms <= 360) return "var(--warning-text)";
+    return "var(--danger-text)";
+  }
+  if (ms <= 110) return "var(--success-text)";
+  if (ms <= 240) return "var(--warning-text)";
   return "var(--danger-text)";
 }
 
@@ -238,6 +246,7 @@ export interface ExitDisplayLabels {
 export interface ResolvedExit {
   label: string;
   protocol?: string;
+  region?: string;
   groupHint?: string;
   kind: "node" | "direct" | "reject" | "unknown";
   rawTag: string;
@@ -286,6 +295,7 @@ export function formatConnectionExit(
     return {
       label: matchedNode.remark,
       protocol: PROTO_BADGES[matchedNode.protocol],
+      region: matchedNode.region,
       groupHint,
       kind: "node",
       rawTag: matchedNode.id,

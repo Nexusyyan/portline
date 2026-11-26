@@ -4,6 +4,7 @@ import zhCN from "../locales/zh-CN.json";
 import type { NodeIR, SimpleRoutingRule } from "../types";
 import {
   computeAvailableRegions,
+  delayColorVar,
   evaluateRouteSimulation,
   filterAndSortNodes,
   formatBytes,
@@ -13,6 +14,7 @@ import {
   PROTO_BADGES,
   pushRingBuffer,
 } from "./nodes";
+import { normalizeIsoCode, parseFlagText } from "../components/RegionFlag";
 
 function collectLeafKeys(obj: Record<string, unknown>, prefix = ""): string[] {
   const keys: string[] = [];
@@ -273,5 +275,21 @@ describe("Portline frontend utilities & i18n parity", () => {
     expect(humanized).toBe(
       "outbound/vless[vmiss REALITY (cfedge)]: outbound connection via [Auto Australia]"
     );
+  });
+
+  it("extracts regional flag emojis cleanly for Windows SVG flag rendering and scales delay thresholds", () => {
+    const usFlag = "\u{1F1FA}\u{1F1F8} Los Angeles 01";
+    const parsed = parseFlagText(usFlag, "OTHER");
+    expect(parsed.isoCode).toBe("US");
+    expect(parsed.cleanText).toBe("Los Angeles 01");
+
+    const ukFallback = parseFlagText("London Node", "UK");
+    expect(ukFallback.isoCode).toBe("GB");
+    expect(ukFallback.cleanText).toBe("London Node");
+
+    expect(normalizeIsoCode("OTHER")).toBeNull();
+    expect(delayColorVar(140, "real")).toBe("var(--success-text)");
+    expect(delayColorVar(280, "real")).toBe("var(--warning-text)");
+    expect(delayColorVar(280, "tcping")).toBe("var(--danger-text)");
   });
 });

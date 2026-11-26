@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -11,9 +12,31 @@ pub struct RuleSetStatus {
     pub fallback_mode: bool,
 }
 
+/// Builds candidate download URLs for official SagerNet sing-geosite / sing-geoip binary `.srs` files.
+pub fn default_rule_set_urls(tag: &str) -> Vec<String> {
+    let clean = sanitize_tag(tag);
+    let repo = if clean.starts_with("geoip-") {
+        "sing-geoip"
+    } else {
+        "sing-geosite"
+    };
+    let raw_gh = format!(
+        "https://raw.githubusercontent.com/SagerNet/{}/rule-set/{}.srs",
+        repo, clean
+    );
+    vec![
+        format!(
+            "https://cdn.jsdelivr.net/gh/SagerNet/{}@rule-set/{}.srs",
+            repo, clean
+        ),
+        raw_gh.clone(),
+        format!("https://ghfast.top/{}", raw_gh),
+    ]
+}
+
 /// 3-tier `.srs` rule-set cache:
 /// 1. Existing local `.srs` file in `<data_dir>/rule-sets/<tag>.srs`
-/// 2. Dual-channel download (via local proxy port first, then direct fallback)
+/// 2. Dual-channel download (via local proxy port first, then direct / CDN mirrors)
 /// 3. Offline fallback: never blocks startup; compiler transparently falls back to domain suffixes.
 pub struct RuleCache {
     dir: PathBuf,
@@ -56,7 +79,90 @@ impl RuleCache {
                 }
             }
         }
+        out.sort_by(|a, b| a.tag.cmp(&b.tag));
         out
+    }
+
+    /// Evaluates whether `target` (domain or IP address) matches a locally cached binary `.srs`
+    /// file using `sing-box rule-set match -f binary`. Returns `None` if binary or `.srs` is absent.
+    pub fn match_local_srs(
+        &self,
+        sing_box_path: &Path,
+        tag: &str,
+        target: &str,
+    ) -> Option<bool> {
+        if !sing_box_path.exists() {
+            return None;
+        }
+        let srs_path = self.local_srs_path(tag)?;
+        let mut cmd = Command::new(sing_box_path);
+        cmd.arg("rule-set")
+            .arg("match")
+            .arg("-f")
+            .arg("binary")
+            .arg(&srs_path)
+            .arg(target);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let out = cmd.output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let matched = stdout.contains("match ") || stderr.contains("match ");
+        Some(matched)
+    }
+
+    /// Attempts multi-mirror download (via active local proxy first, then direct CDN/mirrors).
+    pub async fn refresh_rule_set_auto(
+        &self,
+        tag: &str,
+        local_proxy_port: Option<u16>,
+    ) -> RuleSetStatus {
+        let safe_tag = sanitize_tag(tag);
+        let dest = self.dir.join(format!("{}.srs", safe_tag));
+        let urls = default_rule_set_urls(&safe_tag);
+
+        if let Some(port) = local_proxy_port {
+            for url in &urls {
+                if let Ok(bytes) = fetch_bytes(url, Some(port)).await {
+                    if write_atomic(&dest, &bytes).is_ok() {
+                        return RuleSetStatus {
+                            tag: safe_tag,
+                            cached_locally: true,
+                            bytes: bytes.len() as u64,
+                            fallback_mode: false,
+                        };
+                    }
+                }
+            }
+        }
+
+        for url in &urls {
+            if let Ok(bytes) = fetch_bytes(url, None).await {
+                if write_atomic(&dest, &bytes).is_ok() {
+                    return RuleSetStatus {
+                        tag: safe_tag,
+                        cached_locally: true,
+                        bytes: bytes.len() as u64,
+                        fallback_mode: false,
+                    };
+                }
+            }
+        }
+
+        let existing_len = dest.metadata().map(|m| m.len()).unwrap_or(0);
+        RuleSetStatus {
+            tag: safe_tag,
+            cached_locally: existing_len > 0,
+            bytes: existing_len,
+            fallback_mode: true,
+        }
     }
 
     /// Attempts dual-channel download (proxy -> direct); on network failure, degrades cleanly
@@ -108,7 +214,10 @@ impl RuleCache {
 }
 
 async fn fetch_bytes(url: &str, proxy_port: Option<u16>) -> Result<Vec<u8>> {
-    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(10));
+    let mut builder = reqwest::Client::builder()
+        .user_agent("Portline/0.1")
+        .connect_timeout(Duration::from_secs(6))
+        .timeout(Duration::from_secs(20));
     if let Some(port) = proxy_port {
         builder = builder.proxy(reqwest::Proxy::all(format!("http://127.0.0.1:{}", port))?);
     } else {
@@ -136,10 +245,11 @@ fn write_atomic(dest: &Path, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn sanitize_tag(tag: &str) -> String {
-    tag.chars()
+pub fn sanitize_tag(tag: &str) -> String {
+    tag.trim()
+        .chars()
         .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '!' | '@' | '.') {
                 c
             } else {
                 '-'

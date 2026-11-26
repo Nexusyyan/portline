@@ -1,21 +1,30 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
   AppSettings,
+  ApplyStrategyResult,
   BootstrapPayload,
   CompileOutput,
+  ConnectionHistoryPage,
   CoreInfo,
   ImportSummary,
   InboundPort,
+  LatencyProgressEvent,
   LatencyResult,
   LiveMonitorPayload,
   NodeIR,
+  PlatformTrafficPayload,
   PreflightReport,
   RouteMode,
+  RouteTestResult,
+  RulePresetSpec,
+  RuleSetStatus,
   SelectNodeResult,
   SimpleRoutingRule,
   SubscriptionGroup,
+  SyncRuleSetsResult,
 } from "../types";
 
 function isTauriEnv(): boolean {
@@ -77,6 +86,29 @@ export const api = {
     return invoke<CompileOutput>("delete_rule", { id });
   },
 
+  async listRulePresets(): Promise<RulePresetSpec[]> {
+    return invoke<RulePresetSpec[]>("list_rule_presets");
+  },
+
+  async listRuleSets(): Promise<RuleSetStatus[]> {
+    return invoke<RuleSetStatus[]>("list_rule_sets");
+  },
+
+  async applyRoutingStrategy(strategyId: string): Promise<ApplyStrategyResult> {
+    return invoke<ApplyStrategyResult>("apply_routing_strategy", { strategyId });
+  },
+
+  async syncRuleSets(tags: string[]): Promise<SyncRuleSetsResult> {
+    return invoke<SyncRuleSetsResult>("sync_rule_sets", { tags });
+  },
+
+  async testRouteTarget(input: string, processName?: string): Promise<RouteTestResult> {
+    return invoke<RouteTestResult>("test_route_target", {
+      input,
+      processName: processName || null,
+    });
+  },
+
   async saveInboundPort(port: InboundPort): Promise<CompileOutput> {
     return invoke<CompileOutput>("save_inbound_port", { port });
   },
@@ -131,8 +163,40 @@ export const api = {
     return invoke<LatencyResult[]>("run_batch_real_delay", { nodeIds });
   },
 
+  async onLatencyProgress(
+    cb: (ev: LatencyProgressEvent) => void
+  ): Promise<() => void> {
+    if (!isTauriEnv()) return () => {};
+    return listen<LatencyProgressEvent>("latency-test-progress", (e) => cb(e.payload));
+  },
+
+  async onStateSync(cb: () => void): Promise<() => void> {
+    if (!isTauriEnv()) return () => {};
+    return listen("portline-state-sync", () => cb());
+  },
+
   async getLiveMonitor(): Promise<LiveMonitorPayload> {
     return invoke<LiveMonitorPayload>("get_live_monitor");
+  },
+
+  async getConnectionHistory(
+    query: string,
+    page: number,
+    pageSize: number
+  ): Promise<ConnectionHistoryPage> {
+    return invoke<ConnectionHistoryPage>("get_connection_history", {
+      query,
+      page,
+      pageSize,
+    });
+  },
+
+  async getPlatformTraffic(range: string): Promise<PlatformTrafficPayload> {
+    return invoke<PlatformTrafficPayload>("get_platform_traffic", { range });
+  },
+
+  async clearConnectionHistory(): Promise<void> {
+    return invoke("clear_connection_history");
   },
 
   async closeConnection(id: string): Promise<void> {
@@ -153,6 +217,18 @@ export const api = {
 
   async hideToTray(): Promise<void> {
     if (isTauriEnv()) await invoke("hide_to_tray");
+  },
+
+  async showMainWindow(): Promise<void> {
+    if (isTauriEnv()) await invoke("show_main_window");
+  },
+
+  async hideTrayPopup(): Promise<void> {
+    if (isTauriEnv()) await invoke("hide_tray_popup");
+  },
+
+  async quitApp(): Promise<void> {
+    if (isTauriEnv()) await invoke("quit_app");
   },
 
   windowControls: {

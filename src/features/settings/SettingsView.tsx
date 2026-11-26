@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { Check, HardDrive, ShieldCheck } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowRight, Check, Globe, HardDrive, ShieldCheck } from "lucide-react";
 import { BrandLogo } from "../../components/BrandLogo";
-import { CustomSelect, type SelectGroup } from "../../components/CustomSelect";
 import type { Dict } from "../../i18n";
 import type { AppSettings, CoreInfo, Locale, ThemeMode } from "../../types";
 
@@ -15,18 +14,13 @@ interface SettingsViewProps {
   onChangeTheme: (theme: ThemeMode) => void;
   onUpdateSettings: (next: AppSettings) => void;
   onRestoreNetguard: () => void;
+  onGoToDns: () => void;
 }
 
-const LOCAL_DNS_PRESETS = [
-  { label: "AliDNS UDP", value: "223.5.5.5" },
-  { label: "DNSPod UDP", value: "119.29.29.29" },
-  { label: "AliDNS DoH", value: "https://dns.alidns.com/dns-query" },
-];
-
-const REMOTE_DNS_PRESETS = [
-  { label: "Cloudflare DoH", value: "https://1.1.1.1/dns-query" },
-  { label: "Google DoH", value: "https://8.8.8.8/dns-query" },
-  { label: "Cloudflare DoT", value: "tls://1.1.1.1" },
+const TEST_URL_PRESETS = [
+  { label: "gstatic HTTPS", value: "https://www.gstatic.com/generate_204" },
+  { label: "gstatic HTTP", value: "http://www.gstatic.com/generate_204" },
+  { label: "Cloudflare HTTP", value: "http://cp.cloudflare.com/generate_204" },
 ];
 
 export function SettingsView({
@@ -39,15 +33,13 @@ export function SettingsView({
   onChangeTheme,
   onUpdateSettings,
   onRestoreNetguard,
+  onGoToDns,
 }: SettingsViewProps) {
   const [savedTick, setSavedTick] = useState(false);
 
-  // Free string drafts prevent fighting user selection/deletion on port & text fields.
   const [mixedPortDraft, setMixedPortDraft] = useState(String(settings.mixedPort));
   const [controlPortDraft, setControlPortDraft] = useState(String(settings.controlPort));
   const [testUrlDraft, setTestUrlDraft] = useState(settings.latencyTestUrl);
-  const [dnsLocalDraft, setDnsLocalDraft] = useState(settings.dnsLocalServer);
-  const [dnsRemoteDraft, setDnsRemoteDraft] = useState(settings.dnsRemoteServer);
   const [overrideDraft, setOverrideDraft] = useState(
     settings.customJsonOverride ?? ""
   );
@@ -63,14 +55,6 @@ export function SettingsView({
   useEffect(() => {
     setTestUrlDraft(settings.latencyTestUrl);
   }, [settings.latencyTestUrl]);
-
-  useEffect(() => {
-    setDnsLocalDraft(settings.dnsLocalServer);
-  }, [settings.dnsLocalServer]);
-
-  useEffect(() => {
-    setDnsRemoteDraft(settings.dnsRemoteServer);
-  }, [settings.dnsRemoteServer]);
 
   useEffect(() => {
     setOverrideDraft(settings.customJsonOverride ?? "");
@@ -115,21 +99,6 @@ export function SettingsView({
       setControlPortDraft(String(settings.controlPort));
     }
   };
-
-  const dnsStrategyGroups: SelectGroup[] = useMemo(
-    () => [
-      {
-        label: dict.settings.dnsStrategyLabel,
-        options: [
-          { value: "prefer_ipv4", label: dict.settings.dnsStrategyPrefer4 },
-          { value: "ipv4_only", label: dict.settings.dnsStrategyOnly4 },
-          { value: "prefer_ipv6", label: dict.settings.dnsStrategyPrefer6 },
-          { value: "ipv6_only", label: dict.settings.dnsStrategyOnly6 },
-        ],
-      },
-    ],
-    [dict]
-  );
 
   return (
     <section className="min-h-0 flex-1 overflow-auto">
@@ -216,6 +185,33 @@ export function SettingsView({
           <div className="flex items-center justify-between gap-4 px-4 py-3">
             <div>
               <div className="text-[12.5px] font-medium text-[var(--text-primary)]">
+                {dict.settings.autostartLabel}
+              </div>
+              <div className="text-[11.5px] text-[var(--text-secondary)]">
+                {dict.settings.autostartDesc}
+              </div>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={settings.launchAtLogin}
+              onClick={() => commit({ launchAtLogin: !settings.launchAtLogin })}
+              className={`relative h-[18px] w-8 shrink-0 rounded-full transition-colors cursor-pointer ${
+                settings.launchAtLogin
+                  ? "bg-[var(--accent-primary)]"
+                  : "border border-[var(--border-strong)] bg-[var(--bg-track)]"
+              }`}
+            >
+              <span
+                className="absolute top-[2px] h-3.5 w-3.5 rounded-full bg-[var(--bg-surface)] transition-all"
+                style={{ left: settings.launchAtLogin ? "16px" : "2px" }}
+              />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between gap-4 px-4 py-3">
+            <div>
+              <div className="text-[12.5px] font-medium text-[var(--text-primary)]">
                 {dict.settings.trayLabel}
               </div>
               <div className="text-[11.5px] text-[var(--text-secondary)]">
@@ -269,10 +265,7 @@ export function SettingsView({
                 className="ui-input h-8 w-full px-3 font-mono text-[12px] num-tabular"
               />
               {!mixedPortValid && (
-                <div
-                  className="text-[11px]"
-                  style={{ color: "var(--danger-text)" }}
-                >
+                <div className="text-[11px]" style={{ color: "var(--danger-text)" }}>
                   {dict.settings.portRangeHint}
                 </div>
               )}
@@ -299,10 +292,7 @@ export function SettingsView({
                 className="ui-input h-8 w-full px-3 font-mono text-[12px] num-tabular"
               />
               {!controlPortValid && (
-                <div
-                  className="text-[11px]"
-                  style={{ color: "var(--danger-text)" }}
-                >
+                <div className="text-[11px]" style={{ color: "var(--danger-text)" }}>
                   {dict.settings.portRangeHint}
                 </div>
               )}
@@ -336,10 +326,15 @@ export function SettingsView({
             </button>
           </div>
 
-          <div className="space-y-1 px-4 py-3">
-            <label className="block text-[12px] font-medium text-[var(--text-primary)]">
-              {dict.settings.testUrlLabel}
-            </label>
+          <div className="space-y-2 px-4 py-3">
+            <div>
+              <label className="block text-[12px] font-medium text-[var(--text-primary)]">
+                {dict.settings.testUrlLabel}
+              </label>
+              <div className="text-[11px] text-[var(--text-secondary)]">
+                {dict.settings.testUrlHint}
+              </div>
+            </div>
             <input
               type="text"
               value={testUrlDraft}
@@ -354,93 +349,17 @@ export function SettingsView({
               }}
               className="ui-input h-8 w-full px-3 font-mono text-[12px]"
             />
-          </div>
-        </div>
-
-        {/* DNS Resolution Settings */}
-        <div className="ui-card divide-y divide-[var(--border-hairline)] overflow-hidden">
-          <div className="bg-[var(--bg-subtle)] px-4 py-2 text-[11.5px] font-medium text-[var(--text-secondary)]">
-            {dict.settings.secDns}
-          </div>
-
-          <div className="space-y-2 px-4 py-3">
-            <div>
-              <label className="block text-[12.5px] font-medium text-[var(--text-primary)]">
-                {dict.settings.dnsLocalLabel}
-              </label>
-              <div className="text-[11.5px] text-[var(--text-secondary)]">
-                {dict.settings.dnsLocalDesc}
-              </div>
-            </div>
-            <input
-              type="text"
-              value={dnsLocalDraft}
-              onChange={(e) => setDnsLocalDraft(e.target.value)}
-              onBlur={() => {
-                const v = dnsLocalDraft.trim();
-                if (v && v !== settings.dnsLocalServer) {
-                  commit({ dnsLocalServer: v });
-                } else if (!v) {
-                  setDnsLocalDraft(settings.dnsLocalServer);
-                }
-              }}
-              className="ui-input h-8 w-full px-3 font-mono text-[12px]"
-            />
             <div className="flex flex-wrap gap-1.5">
-              {LOCAL_DNS_PRESETS.map((p) => (
+              {TEST_URL_PRESETS.map((p) => (
                 <button
                   key={p.value}
                   type="button"
                   onClick={() => {
-                    setDnsLocalDraft(p.value);
-                    commit({ dnsLocalServer: p.value });
+                    setTestUrlDraft(p.value);
+                    commit({ latencyTestUrl: p.value });
                   }}
                   className={`rounded-[6px] border px-2 py-0.5 font-mono text-[11px] transition-colors cursor-pointer ${
-                    dnsLocalDraft === p.value
-                      ? "border-[var(--border-strong)] bg-[var(--bg-selected)] text-[var(--text-primary)]"
-                      : "border-[var(--border-hairline)] bg-[var(--bg-subtle)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-                  }`}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-2 px-4 py-3">
-            <div>
-              <label className="block text-[12.5px] font-medium text-[var(--text-primary)]">
-                {dict.settings.dnsRemoteLabel}
-              </label>
-              <div className="text-[11.5px] text-[var(--text-secondary)]">
-                {dict.settings.dnsRemoteDesc}
-              </div>
-            </div>
-            <input
-              type="text"
-              value={dnsRemoteDraft}
-              onChange={(e) => setDnsRemoteDraft(e.target.value)}
-              onBlur={() => {
-                const v = dnsRemoteDraft.trim();
-                if (v && v !== settings.dnsRemoteServer) {
-                  commit({ dnsRemoteServer: v });
-                } else if (!v) {
-                  setDnsRemoteDraft(settings.dnsRemoteServer);
-                }
-              }}
-              className="ui-input h-8 w-full px-3 font-mono text-[12px]"
-            />
-            <div className="flex flex-wrap gap-1.5">
-              {REMOTE_DNS_PRESETS.map((p) => (
-                <button
-                  key={p.value}
-                  type="button"
-                  onClick={() => {
-                    setDnsRemoteDraft(p.value);
-                    commit({ dnsRemoteServer: p.value });
-                  }}
-                  className={`rounded-[6px] border px-2 py-0.5 font-mono text-[11px] transition-colors cursor-pointer ${
-                    dnsRemoteDraft === p.value
+                    testUrlDraft === p.value
                       ? "border-[var(--border-strong)] bg-[var(--bg-selected)] text-[var(--text-primary)]"
                       : "border-[var(--border-hairline)] bg-[var(--bg-subtle)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
                   }`}
@@ -454,44 +373,44 @@ export function SettingsView({
           <div className="flex items-center justify-between gap-4 px-4 py-3">
             <div>
               <div className="text-[12.5px] font-medium text-[var(--text-primary)]">
-                {dict.settings.dnsStrategyLabel}
+                {dict.settings.stripHandshakeLabel}
               </div>
               <div className="text-[11.5px] text-[var(--text-secondary)]">
-                {dict.settings.dnsStrategyDesc}
-              </div>
-            </div>
-            <CustomSelect
-              value={settings.dnsStrategy}
-              groups={dnsStrategyGroups}
-              onChange={(val) => commit({ dnsStrategy: val })}
-              className="w-44"
-            />
-          </div>
-
-          <div className="flex items-center justify-between gap-4 px-4 py-3">
-            <div>
-              <div className="text-[12.5px] font-medium text-[var(--text-primary)]">
-                {dict.settings.dnsFakeIpLabel}
-              </div>
-              <div className="text-[11.5px] text-[var(--text-secondary)]">
-                {dict.settings.dnsFakeIpDesc}
+                {dict.settings.stripHandshakeDesc}
               </div>
             </div>
             <button
               type="button"
               role="switch"
-              aria-checked={settings.dnsFakeIp}
-              onClick={() => commit({ dnsFakeIp: !settings.dnsFakeIp })}
+              aria-checked={settings.latencyStripHandshake}
+              onClick={() =>
+                commit({ latencyStripHandshake: !settings.latencyStripHandshake })
+              }
               className={`relative h-[18px] w-8 shrink-0 rounded-full transition-colors cursor-pointer ${
-                settings.dnsFakeIp
+                settings.latencyStripHandshake
                   ? "bg-[var(--accent-primary)]"
                   : "border border-[var(--border-strong)] bg-[var(--bg-track)]"
               }`}
             >
               <span
                 className="absolute top-[2px] h-3.5 w-3.5 rounded-full bg-[var(--bg-surface)] transition-all"
-                style={{ left: settings.dnsFakeIp ? "16px" : "2px" }}
+                style={{ left: settings.latencyStripHandshake ? "16px" : "2px" }}
               />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between gap-4 bg-[var(--bg-subtle)] px-4 py-2.5 text-[12px]">
+            <span className="inline-flex items-center gap-2 text-[var(--text-secondary)]">
+              <Globe className="h-3.5 w-3.5 text-[var(--text-tertiary)]" strokeWidth={1.5} />
+              {dict.settings.dnsShortcutLabel}
+            </span>
+            <button
+              type="button"
+              onClick={onGoToDns}
+              className="ui-btn-secondary h-7 text-[11.5px]"
+            >
+              {dict.settings.dnsShortcutBtn}
+              <ArrowRight className="h-3 w-3" strokeWidth={1.5} />
             </button>
           </div>
         </div>

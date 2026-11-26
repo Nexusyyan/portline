@@ -2,6 +2,7 @@ import {
   Activity,
   Code2,
   GitBranch,
+  Globe,
   Play,
   Server,
   Settings,
@@ -11,6 +12,7 @@ import {
 import type { Dict } from "../i18n";
 import type { CoreInfo, NavTab, NodeIR } from "../types";
 import { delayColorVar, PROTO_BADGES } from "../utils/nodes";
+import { NodeLabel } from "./RegionFlag";
 
 interface SidebarProps {
   dict: Dict;
@@ -19,6 +21,7 @@ interface SidebarProps {
   nodeCount: number;
   activeRuleCount: number;
   connectionCount: number;
+  dnsFakeIp: boolean;
   mainNode: NodeIR | null;
   mixedPort: number;
   coreInfo: CoreInfo;
@@ -33,6 +36,7 @@ export function Sidebar({
   nodeCount,
   activeRuleCount,
   connectionCount,
+  dnsFakeIp,
   mainNode,
   mixedPort,
   coreInfo,
@@ -48,12 +52,14 @@ export function Sidebar({
   }> = [
     { id: "nodes", label: dict.nav.nodes, icon: Server, badge: String(nodeCount) },
     { id: "routing", label: dict.nav.routing, icon: GitBranch, badge: String(activeRuleCount) },
+    { id: "dns", label: dict.nav.dns, icon: Globe, badge: dnsFakeIp ? "FakeIP" : undefined },
     { id: "monitor", label: dict.nav.monitor, icon: Activity, badge: String(connectionCount) },
     { id: "core", label: dict.nav.core, icon: Code2, dot: coreInfo.installed },
     { id: "settings", label: dict.nav.settings, icon: Settings },
   ];
 
   const delay = mainNode ? (mainNode.realDelayMs ?? mainNode.tcpingMs ?? null) : null;
+  const delayKind = mainNode?.realDelayMs != null ? "real" : "tcping";
 
   return (
     <aside className="flex w-[212px] shrink-0 flex-col justify-between gap-3 bg-[var(--bg-sidebar)] px-2.5 py-2.5 select-none">
@@ -83,7 +89,7 @@ export function Sidebar({
                 <span>{item.label}</span>
               </span>
               {item.badge !== undefined && (
-                <span className="font-mono text-[11px] num-tabular text-[var(--text-tertiary)]">
+                <span className="font-mono text-[10.5px] num-tabular text-[var(--text-tertiary)]">
                   {item.badge}
                 </span>
               )}
@@ -108,7 +114,11 @@ export function Sidebar({
         </div>
 
         <div className="truncate text-[12.5px] font-semibold text-[var(--text-primary)]">
-          {mainNode ? mainNode.remark : dict.nav.noNodeSelected}
+          {mainNode ? (
+            <NodeLabel remark={mainNode.remark} region={mainNode.region} size="sm" />
+          ) : (
+            dict.nav.noNodeSelected
+          )}
         </div>
 
         {mainNode && (
@@ -118,7 +128,7 @@ export function Sidebar({
             </span>
             <span
               className="font-mono font-medium num-tabular"
-              style={{ color: delayColorVar(delay) }}
+              style={{ color: delayColorVar(delay, delayKind) }}
             >
               {delay != null ? `${delay} ms` : "--"}
             </span>

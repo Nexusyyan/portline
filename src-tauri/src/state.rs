@@ -1,10 +1,13 @@
 use portline_core::compiler::{CompileInput, SingBox114Compiler};
 use portline_core::core_manager::CoreManager;
-use portline_core::model::{CompileOutput, CoreInfo, PreflightReport};
+use portline_core::model::{
+    CompileOutput, ConnectionHistoryRecord, ConnectionItem, CoreInfo, PreflightReport,
+};
 use portline_core::netguard::NetGuard;
 use portline_core::rule_cache::RuleCache;
-use portline_core::storage::{DataPaths, Store};
+use portline_core::storage::{classify_platform, extract_host, DataPaths, Store};
 use portline_core::supervisor::{CoreSupervisor, LogRing, MAX_LOG_RING_ENTRIES};
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -24,6 +27,77 @@ impl Default for TrafficCursor {
     }
 }
 
+#[derive(Default)]
+pub struct ConnectionTracker {
+    active: HashMap<String, ConnectionItem>,
+}
+
+impl ConnectionTracker {
+    /// Updates active connection map from a live Clash API snapshot and returns
+    /// records for connections that just closed so they can be persisted to SQLite.
+    pub fn sync_snapshot(&mut self, live: &[ConnectionItem]) -> Vec<ConnectionHistoryRecord> {
+        let mut live_ids: HashSet<&str> = HashSet::with_capacity(live.len());
+        for item in live {
+            if item.id.is_empty() {
+                continue;
+            }
+            live_ids.insert(item.id.as_str());
+            self.active.insert(item.id.clone(), item.clone());
+        }
+
+        let closed_ids: Vec<String> = self
+            .active
+            .keys()
+            .filter(|id| !live_ids.contains(id.as_str()))
+            .cloned()
+            .collect();
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut closed = Vec::with_capacity(closed_ids.len());
+        for id in closed_ids {
+            if let Some(item) = self.active.remove(&id) {
+                closed.push(to_history_record(item, &now));
+            }
+        }
+        closed
+    }
+
+    pub fn drain_all(&mut self) -> Vec<ConnectionHistoryRecord> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.active
+            .drain()
+            .map(|(_, item)| to_history_record(item, &now))
+            .collect()
+    }
+
+    pub fn snapshot_active(&self) -> Vec<ConnectionItem> {
+        self.active.values().cloned().collect()
+    }
+}
+
+fn to_history_record(item: ConnectionItem, closed_at: &str) -> ConnectionHistoryRecord {
+    let host = extract_host(&item.destination);
+    let platform = classify_platform(&host, &item.process);
+    ConnectionHistoryRecord {
+        id: item.id,
+        process: item.process,
+        destination: item.destination,
+        host,
+        platform,
+        inbound: item.inbound,
+        rule: item.rule,
+        chain: item.chain,
+        upload_bytes: item.upload_bytes,
+        download_bytes: item.download_bytes,
+        started_at: if item.start.is_empty() {
+            closed_at.to_string()
+        } else {
+            item.start
+        },
+        closed_at: closed_at.to_string(),
+    }
+}
+
 pub struct AppState {
     pub paths: DataPaths,
     pub store: Mutex<Store>,
@@ -35,6 +109,7 @@ pub struct AppState {
     pub control_secret: String,
     pub recovered_from_crash: bool,
     pub traffic_cursor: Mutex<TrafficCursor>,
+    pub conn_tracker: Mutex<ConnectionTracker>,
 }
 
 impl AppState {
@@ -78,12 +153,39 @@ impl AppState {
             control_secret,
             recovered_from_crash,
             traffic_cursor: Mutex::new(TrafficCursor::default()),
+            conn_tracker: Mutex::new(ConnectionTracker::default()),
         })
     }
 
     pub fn push_log(&self, level: &str, msg: impl Into<String>) {
         if let Ok(mut guard) = self.logs.lock() {
             guard.push(level, msg);
+        }
+    }
+
+    pub fn record_connections_snapshot(&self, conns: &[ConnectionItem]) {
+        let closed = if let Ok(mut tracker) = self.conn_tracker.lock() {
+            tracker.sync_snapshot(conns)
+        } else {
+            Vec::new()
+        };
+        if !closed.is_empty() {
+            if let Ok(mut store) = self.store.lock() {
+                let _ = store.insert_connection_history(&closed);
+            }
+        }
+    }
+
+    pub fn flush_active_connections(&self) {
+        let flushed = if let Ok(mut tracker) = self.conn_tracker.lock() {
+            tracker.drain_all()
+        } else {
+            Vec::new()
+        };
+        if !flushed.is_empty() {
+            if let Ok(mut store) = self.store.lock() {
+                let _ = store.insert_connection_history(&flushed);
+            }
         }
     }
 
@@ -185,6 +287,7 @@ impl AppState {
     }
 
     pub fn shutdown_cleanly(&self) {
+        self.flush_active_connections();
         if let Ok(mut sup) = self.supervisor.lock() {
             sup.stop();
         }

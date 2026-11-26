@@ -11,7 +11,7 @@ export type Protocol =
   | "socks";
 
 export type RouteMode = "rule" | "global" | "direct";
-export type NavTab = "nodes" | "routing" | "monitor" | "core" | "settings";
+export type NavTab = "nodes" | "routing" | "dns" | "monitor" | "core" | "settings";
 export type Locale = "zh-CN" | "en";
 export type ThemeMode = "system" | "light" | "dark";
 
@@ -94,11 +94,76 @@ export interface SimpleRoutingRule {
   titleEn: string;
   description: string;
   patterns: string[];
+  domainKeywords?: string[];
+  ipCidrs?: string[];
   processNames: string[];
   ruleSet?: string | null;
   target: string;
   enabled: boolean;
   priority: number;
+}
+
+export interface RulePresetSpec {
+  id: string;
+  category: string;
+  title: string;
+  titleEn: string;
+  description: string;
+  patterns: string[];
+  processNames: string[];
+  ruleSet?: string | null;
+  defaultTarget: string;
+  defaultPriority: number;
+}
+
+export interface RuleSetStatus {
+  tag: string;
+  cachedLocally: boolean;
+  bytes: number;
+  fallbackMode: boolean;
+}
+
+export interface SyncRuleSetsResult {
+  statuses: RuleSetStatus[];
+  compiled: CompileOutput;
+}
+
+export interface ApplyStrategyResult {
+  rules: SimpleRoutingRule[];
+  ruleSets: RuleSetStatus[];
+  compiled: CompileOutput;
+}
+
+export interface RouteTestResult {
+  input: string;
+  normalizedHost: string;
+  isIp: boolean;
+  isPrivateIp: boolean;
+  routeMode: RouteMode;
+  matchedRuleId?: string | null;
+  matchedRuleTitle?: string | null;
+  matchedBy: string;
+  target: string;
+  resolvedExitKind: string;
+  resolvedExitLabel: string;
+  resolvedNodeId?: string | null;
+  resolvedNodeRegion?: string | null;
+  dnsServer: string;
+  dnsReason: string;
+}
+
+export interface DnsRuleItem {
+  id: string;
+  title: string;
+  domains: string[];
+  ruleSet?: string | null;
+  server: string;
+  enabled: boolean;
+}
+
+export interface DnsHostEntry {
+  domain: string;
+  ips: string[];
 }
 
 export interface AppSettings {
@@ -112,11 +177,39 @@ export interface AppSettings {
   systemProxyEnabled: boolean;
   tunEnabled: boolean;
   autoStartCore: boolean;
+  launchAtLogin: boolean;
   minimizeToTray: boolean;
   dnsLocalServer: string;
   dnsRemoteServer: string;
+  dnsBootstrapServer: string;
+  dnsRemoteDetour: string;
   dnsStrategy: string;
   dnsFakeIp: boolean;
+  dnsFakeIpInet4: string;
+  dnsFakeIpInet6: string;
+  dnsDisableCache: boolean;
+  dnsDisableExpire: boolean;
+  dnsReverseMapping: boolean;
+  dnsCacheCapacity: number;
+  dnsClientSubnet?: string | null;
+  dnsCustomRules: DnsRuleItem[];
+  dnsHosts: DnsHostEntry[];
+  logLevel: string;
+  sniffEnabled: boolean;
+  sniffTimeout: string;
+  findProcess: boolean;
+  autoDetectInterface: boolean;
+  tunInterfaceName: string;
+  tunStack: string;
+  tunMtu: number;
+  tunInet4Address: string;
+  tunAutoRoute: boolean;
+  tunStrictRoute: boolean;
+  urltestInterval: string;
+  urltestTolerance: number;
+  cacheFileEnabled: boolean;
+  cacheStoreFakeip: boolean;
+  latencyStripHandshake: boolean;
   latencyTestUrl: string;
   customJsonOverride?: string | null;
 }
@@ -157,6 +250,17 @@ export interface LatencyResult {
   error?: string | null;
 }
 
+export interface LatencyProgressEvent {
+  kind: "tcping" | "real";
+  phase: "starting" | "testing" | "done";
+  completed: number;
+  total: number;
+  passed: number;
+  failed: number;
+  stripHandshake?: boolean;
+  latest?: LatencyResult | null;
+}
+
 export interface LogEntry {
   timestamp: string;
   level: string;
@@ -175,6 +279,45 @@ export interface ConnectionItem {
   start: string;
 }
 
+export interface ConnectionHistoryRecord {
+  id: string;
+  process: string;
+  destination: string;
+  host: string;
+  platform: string;
+  inbound: string;
+  rule: string;
+  chain: string[];
+  uploadBytes: number;
+  downloadBytes: number;
+  startedAt: string;
+  closedAt: string;
+}
+
+export interface ConnectionHistoryPage {
+  items: ConnectionHistoryRecord[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface PlatformTrafficStat {
+  platform: string;
+  uploadBytes: number;
+  downloadBytes: number;
+  totalBytes: number;
+  connectionCount: number;
+  activeCount: number;
+  topDomains: string[];
+}
+
+export interface PlatformTrafficPayload {
+  items: PlatformTrafficStat[];
+  totalUpload: number;
+  totalDownload: number;
+  totalConnections: number;
+}
+
 export interface TrafficSample {
   upBytesPerSec: number;
   downBytesPerSec: number;
@@ -189,6 +332,7 @@ export interface BootstrapPayload {
   subscriptions: SubscriptionGroup[];
   rules: SimpleRoutingRule[];
   extraPorts: InboundPort[];
+  ruleSets: RuleSetStatus[];
   compiled: CompileOutput;
   logs: LogEntry[];
 }
